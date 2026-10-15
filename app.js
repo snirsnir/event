@@ -760,14 +760,16 @@ function ownersHtml(owners, path, edit) {
   return `<div class="chips">${chips}<input class="chip-in" list="staffNames" placeholder="+ אחראי/ת" data-owner-in="${path}"></div>`;
 }
 
-function sectionsHtml(d, edit, ev) {
+// opts.only — להציג רק את החלק הזה (שלב באשף). opts.noAdd — בלי כפתור "הוספת חלק".
+function sectionsHtml(d, edit, ev, opts = {}) {
   const html = d.sections.map((sec, si) => {
+    if (opts.only != null && si !== opts.only) return "";
     if (!edit && !sec.enabled) return "";
     const sp = `sections.${si}`;
     const head = edit
       ? `<input class="sec-title" data-p="${sp}.title" value="${esc(sec.title)}">
          <input class="sec-note" data-p="${sp}.note" value="${esc(sec.note)}" placeholder="הערה לחלק (אופציונלי)">
-         <label class="switch" title="חלק שלא כלול לא יופיע בטופס, במשימות ובזימון"><input type="checkbox" data-act="toggleSec" data-si="${si}" ${sec.enabled ? "checked" : ""}> כלול בטופס</label>
+         ${opts.only == null ? `<label class="switch" title="חלק שלא כלול לא יופיע בטופס, במשימות ובזימון"><input type="checkbox" data-act="toggleSec" data-si="${si}" ${sec.enabled ? "checked" : ""}> כלול בטופס</label>` : ""}
          <button class="btn-icon" data-act="delSec" data-si="${si}" title="מחיקת החלק">🗑</button>`
       : `<span class="sec-title">${esc(sec.title)}</span>${sec.note ? `<span class="sec-note-ro">${esc(sec.note)}</span>` : ""}`;
 
@@ -813,7 +815,7 @@ function sectionsHtml(d, edit, ev) {
       </div>
     </div>`;
   }).join("");
-  return html + (edit ? `<div style="margin-top:14px"><button class="btn btn-light" data-act="addSec">+ הוספת חלק חדש</button></div>` : "");
+  return html + (edit && !opts.noAdd ? `<div style="margin-top:14px"><button class="btn btn-light" data-act="addSec">+ הוספת חלק חדש</button></div>` : "");
 }
 
 const HISTORY_TEXT = {
@@ -841,12 +843,75 @@ function histEntry(action, extra = {}) {
 //  מצב עריכה
 // ════════════════════════════════════════════════════════════
 
+// ── האשף: פרטי האירוע → כל חלק בשלב משלו → סיכום ושליחה ──
+function wizardSteps(d) {
+  return [
+    { key: "details", label: "פרטי האירוע" },
+    ...d.sections.map((s, si) => ({ key: "sec", si, label: s.title || "חלק " + (si + 1), off: !s.enabled })),
+    { key: "summary", label: "סיכום ושליחה" },
+  ];
+}
+
+function goStep(n) {
+  const steps = wizardSteps(editing.data);
+  n = Math.max(0, Math.min(n, steps.length - 1));
+  // אי אפשר לעבור את שלב הפרטים בלי שם ותאריך
+  if (n > 0 && (editing.step || 0) === 0) {
+    const err = validate(editing.data);
+    if (err) { toast(err, "error"); return; }
+  }
+  editing.step = n;
+  renderEditor();
+  window.scrollTo(0, 0);
+}
+
 function renderEditor(focusSel) {
   const d = editing.data;
   const ev = editing.id ? S.events[editing.id] : null;
-  const y = window.scrollY;
   const returned = ev && ev.status === "returned";
   const retStage = returned && STAGES.find(s => s.status === ev.returnedFrom);
+  const steps = wizardSteps(d);
+  if (editing.step == null || editing.step >= steps.length) editing.step = Math.min(editing.step || 0, steps.length - 1);
+  const step = steps[editing.step];
+  const y = window.scrollY;
+  const next = steps[editing.step + 1];
+
+  let body = "";
+  if (step.key === "details") {
+    body = `<div class="card">
+      <div class="wiz-h">שלב 1 — פרטי האירוע</div>
+      <div class="small muted" style="margin-bottom:12px">שדות עם * הם חובה.</div>
+      ${headerHtml(d, true, editing.id)}
+    </div>`;
+  } else if (step.key === "sec") {
+    const sec = d.sections[step.si];
+    body = `<div class="card">
+      <div class="wiz-h">שלב ${editing.step + 1} — ${esc(sec.title)}</div>
+      <div class="wiz-q ${sec.enabled ? "" : "off"}">
+        <span>האם ${esc(sec.title)} רלוונטי לאירוע?</span>
+        <div class="actions">
+          <button class="btn ${sec.enabled ? "btn-green" : "btn-light"} btn-sm" data-act="secRelevant" data-v="1">כן, כלול בטופס</button>
+          <button class="btn ${sec.enabled ? "btn-light" : "btn-red"} btn-sm" data-act="secRelevant" data-v="0">לא — דלג לשלב הבא</button>
+        </div>
+      </div>
+      ${sec.enabled
+        ? `<div class="small muted" style="margin:10px 0 0">אפשר לערוך כל שורה, לשנות אחראים, להוסיף שורות וקטגוריות. "כמות דרושה" ו"מיקום" — רק אם רלוונטי.</div>
+           ${sectionsHtml(d, true, ev, { only: step.si, noAdd: true })}`
+        : `<div class="empty">החלק הזה לא ייכלל בטופס, במשימות ובזימון.</div>`}
+    </div>`;
+  } else {
+    const pseudo = { id: editing.id || "", status: "draft", done: {} };
+    body = `<div class="card">
+      <div class="wiz-h">סיכום — בדיקה אחרונה לפני שליחה</div>
+      <div class="small muted" style="margin-bottom:12px">כך ייראה הטופס אצל המאשרים. לתיקון — לוחצים על השלב בפס למעלה.</div>
+      ${headerHtml(d, false, editing.id)}
+      ${sectionsHtml(d, false, pseudo) || `<div class="empty">לא נכלל אף חלק בטופס</div>`}
+      <div class="actions" style="margin-top:16px">
+        <button class="btn btn-light" data-act="addSec">+ הוספת חלק נוסף לטופס</button>
+      </div>
+    </div>
+    ${ev && Object.keys(ev.signatures || {}).length ? `<div class="card"><div class="card-title" style="margin-bottom:12px">חתימות</div>${sigsHtml(ev)}</div>` : ""}`;
+  }
 
   $("page").innerHTML = `
     ${returned ? `<div class="panel returned">
@@ -854,28 +919,30 @@ function renderEditor(focusSel) {
       <div style="white-space:pre-wrap">${esc(ev.returnReason || "")}</div>
       <div class="small muted" style="margin-top:8px">אחרי התיקון לחצו "שליחה מחדש" — האירוע יחזור ישירות ל${esc(retStage ? retStage.label : "שלב שהחזיר אותו")}.</div>
     </div>` : ""}
-    <div class="card">
-      <div class="actions no-print" style="justify-content:space-between;margin-bottom:14px">
-        <a href="#home" class="btn btn-light btn-sm">→ חזרה</a>
-        <span>${ev ? statusChip(ev) : '<span class="status st-draft">טיוטה חדשה</span>'} <span id="dirtyMark" class="small muted">${editing.dirty ? "● יש שינויים שלא נשמרו" : ""}</span></span>
-      </div>
-      <div class="form-title">טבלת שליטה להכנה וניהול אירוע ב${ORG_NAME}</div>
-      <div class="form-sub small muted">שדות עם * הם חובה. חלקים א'–ג' אופציונליים — אפשר לכבות, לערוך, ולהוסיף שורות, קטגוריות וחלקים.</div>
-      ${headerHtml(d, true, editing.id)}
+    <div class="actions no-print" style="justify-content:space-between;margin-bottom:12px">
+      <a href="#home" class="btn btn-light btn-sm">→ חזרה</a>
+      <span>${ev ? statusChip(ev) : '<span class="status st-draft">טיוטה חדשה</span>'} <span id="dirtyMark" class="small muted">${editing.dirty ? "● יש שינויים שלא נשמרו" : ""}</span></span>
     </div>
-    ${ev && Object.keys(ev.signatures || {}).length ? `<div class="card"><div class="card-title" style="margin-bottom:12px">חתימות</div>${sigsHtml(ev)}</div>` : ""}
-    <div class="card">${sectionsHtml(d, true, ev)}</div>
-    <div class="card no-print" style="position:sticky;bottom:0;z-index:40;border-top:3px solid var(--blue)">
+    <div class="form-title">${esc(d.name) || "אירוע חדש"}</div>
+    <div class="wiz-bar no-print">
+      ${steps.map((s, i) => `<button class="wiz-step ${i === editing.step ? "cur" : ""} ${i < editing.step ? "past" : ""} ${s.off ? "off" : ""}" data-act="goStep" data-n="${i}">
+        <span class="wiz-n">${i < editing.step && !s.off ? "✓" : i + 1}</span><span class="wiz-l">${esc(s.label)}${s.off ? " (דילוג)" : ""}</span></button>`).join("")}
+    </div>
+    ${body}
+    <div class="card no-print wiz-foot">
       <div class="actions" style="justify-content:space-between">
         <div class="actions">
+          ${editing.step > 0 ? `<button class="btn btn-light" data-act="goStep" data-n="${editing.step - 1}">→ הקודם</button>` : ""}
           <button class="btn btn-light" data-act="saveDraft">💾 שמירת טיוטה</button>
-          ${ev && ev.status === "draft" ? `<button class="btn btn-red" data-act="deleteDraft">🗑 מחיקת טיוטה</button>` : ""}
-          ${ev && ev.status === "returned" ? `<button class="btn btn-red" data-act="cancelEvent">ביטול האירוע</button>` : ""}
+          ${ev && ev.status === "draft" ? `<button class="btn btn-red btn-sm" data-act="deleteDraft">🗑 מחיקת טיוטה</button>` : ""}
+          ${ev && ev.status === "returned" ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
         </div>
-        <button class="btn btn-green" data-act="submit" style="font-size:15px;padding:11px 22px">${returned ? "📤 שליחה מחדש" : "📤 שליחה לאישור"}</button>
+        ${next
+          ? `<button class="btn" data-act="goStep" data-n="${editing.step + 1}" style="font-size:15px;padding:11px 22px">הבא: ${esc(next.label)} ←</button>`
+          : `<button class="btn btn-green" data-act="submit" style="font-size:15px;padding:11px 22px">${returned ? "📤 שליחה מחדש" : "📤 שליחה לאישור"}</button>`}
       </div>
     </div>
-    ${ev ? historyHtml(ev) : ""}`;
+    ${ev && step.key === "summary" ? historyHtml(ev) : ""}`;
   window.scrollTo(0, y);
   if (focusSel) { const el = document.querySelector(focusSel); if (el) el.focus(); }
 }
@@ -1314,10 +1381,20 @@ function bindPageEvents() {
       case "print": window.print(); break;
 
       // עריכה — מבנה
+      case "goStep": goStep(+t.dataset.n); break;
+      case "secRelevant": {
+        const si = wizardSteps(d)[editing.step].si;
+        d.sections[si].enabled = t.dataset.v === "1";
+        markDirty();
+        if (d.sections[si].enabled) renderEditor(); else goStep(editing.step + 1);
+        break;
+      }
       case "addSec":
         d.sections.push({ id: rid(), title: "חלק " + "אבגדהוזחטי"[d.sections.length] + "'", note: "", enabled: true,
           groups: [{ id: rid(), name: "", rows: [{ id: rid(), item: "", owners: [], qty: "", location: "" }] }] });
-        markDirty(); renderEditor(); break;
+        markDirty();
+        goStep(d.sections.length);           // השלב של החלק החדש (שלב 0 הוא פרטי האירוע)
+        break;
       case "delSec":
         if (!confirm(`למחוק את "${d.sections[t.dataset.si].title}" וכל השורות שבו?`)) return;
         d.sections.splice(+t.dataset.si, 1); markDirty(); renderEditor(); break;

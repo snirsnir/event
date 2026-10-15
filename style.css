@@ -296,6 +296,34 @@ table.sheet tr.done .item-ro { text-decoration: line-through; text-decoration-co
 .role-tag.scheduler { background: var(--orange-bg); color: var(--orange); }
 tr.inactive td { opacity: .5; }
 
+/* ── Wizard ── */
+.wiz-bar { display: flex; gap: 6px; margin: 14px 0 16px; overflow-x: auto; padding-bottom: 4px; }
+.wiz-step {
+  flex: 1; min-width: 110px; display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  background: #fff; border: 1px solid #d5dce6; border-radius: 10px; cursor: pointer; text-align: right;
+  font-weight: 600; color: var(--gray); white-space: nowrap;
+}
+.wiz-step:hover { border-color: var(--blue); }
+.wiz-n { width: 24px; height: 24px; border-radius: 50%; background: #e9edf3; color: #556; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+.wiz-l { overflow: hidden; text-overflow: ellipsis; }
+.wiz-step.past .wiz-n { background: var(--green); color: #fff; }
+.wiz-step.past { color: var(--ink); }
+.wiz-step.cur { border: 2px solid var(--blue); color: var(--blue-dark); background: var(--blue-light); }
+.wiz-step.cur .wiz-n { background: var(--blue); color: #fff; }
+.wiz-step.off { opacity: .55; }
+.wiz-step.off .wiz-l { text-decoration: line-through; }
+.wiz-h { font-size: 18px; font-weight: 800; color: var(--blue-dark); margin-bottom: 4px; }
+.wiz-q {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--green-bg); border-right: 4px solid var(--green); border-radius: 8px; padding: 12px 14px; margin-top: 10px; font-weight: 700;
+}
+.wiz-q.off { background: var(--red-bg); border-right-color: var(--red); }
+.wiz-foot { position: sticky; bottom: 0; z-index: 40; border-top: 3px solid var(--blue); }
+@media (max-width: 700px) {
+  .wiz-step { min-width: 0; flex: 0 0 auto; }
+  .wiz-step:not(.cur) .wiz-l { display: none; }
+}
+
 /* ── Calendar ── */
 .cal-collapsed {
   width: 100%; display: flex; align-items: center; gap: 12px; text-align: right;
