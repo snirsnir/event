@@ -492,7 +492,7 @@ function renderHome(page) {
   page.innerHTML = `
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div>
-        <div style="font-size:19px;font-weight:800;color:var(--blue-dark)">שלום ${esc(S.me.name)} 👋</div>
+        <div style="font-size:20px;font-weight:600;color:var(--ink)">שלום ${esc(S.me.name)} 👋</div>
         <div class="small muted" style="margin-top:2px">${roleTags(S.me) || "עובד/ת"}</div>
       </div>
       <a class="btn" href="#event/new" style="font-size:15px;padding:11px 20px">➕ פתיחת אירוע חדש</a>
