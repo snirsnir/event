@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ניהול אירועים — טכנודע</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎪</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <p style="color:#0056b3;font-weight:700;">טוען...</p>
+</div>
+<div id="toast"></div>
+
+<!-- ════ LOGIN ════ -->
+<div id="loginView" class="hidden">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="logo">🎪</div>
+      <h1>ניהול אירועים — טכנודע</h1>
+      <p>פתיחה, אישור ותזמון של אירועים</p>
+      <div id="loginError" class="login-error hidden"></div>
+      <div id="loginDemo" class="hidden">
+        <div class="demo-note">
+          <strong>מצב הדגמה.</strong> הנתונים נשמרים בדפדפן הזה בלבד, ומיילים וזימונים לא נשלחים אלא נאספים ב"תיבת הדואר".
+          כדי להתנסות בכל שלב, אפשר להיכנס בתור כל אחד מהעובדים.
+        </div>
+        <select id="demoUser"></select>
+        <button class="btn" style="width:100%;justify-content:center" id="btnDemoLogin">כניסה</button>
+      </div>
+      <button class="btn-google hidden" id="btnLogin">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" />
+        כניסה עם חשבון Google
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ APP ════ -->
+<div id="appView" class="hidden">
+  <div class="topbar">
+    <a class="topbar-brand" href="#home">🎪 ניהול אירועים — טכנודע</a>
+    <div class="topbar-user">
+      <span class="who" id="whoAmI"></span>
+      <button class="tb-link demo-fab hidden" id="demoFab">📬 דואר הדגמה</button>
+      <a class="tb-link hidden" id="lnkAdmin" href="#admin">⚙️ ניהול</a>
+      <button class="tb-link" id="btnLogout">יציאה</button>
+    </div>
+  </div>
+  <div class="page" id="page"></div>
+</div>
+
+<div id="modalRoot"></div>
+
+<datalist id="staffNames"></datalist>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4.4.1/dist/email.min.js"></script>
+
+<script src="config.js"></script>
+<script src="template.js"></script>
+<script src="store.js"></script>
+<script src="signature.js"></script>
+<script src="mail.js"></script>
+<script src="app.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

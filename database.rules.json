@@ -1,0 +1,26 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "staff": {
+      ".read": "auth != null && (!data.exists() || root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('active').val() === true)",
+      ".write": "auth != null && ((!data.exists() && auth.token.email_verified === true && auth.token.email.toLowerCase() === 'snirdoani@gmail.com') || root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('roles/admin').val() === true)",
+      "$key": {
+        "savedSignature": {
+          ".write": "auth != null && $key === auth.token.email.toLowerCase().replace('.', ',')"
+        }
+      }
+    },
+
+    "settings": {
+      ".read": "auth != null && root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('active').val() === true",
+      ".write": "auth != null && root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('roles/admin').val() === true"
+    },
+
+    "events": {
+      ".read": "auth != null && root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('active').val() === true",
+      ".write": "auth != null && root.child('staff').child(auth.token.email.toLowerCase().replace('.', ',')).child('active').val() === true"
+    }
+  }
+}
