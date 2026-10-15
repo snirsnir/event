@@ -112,6 +112,18 @@ function canApprove(ev) {
   return !!st && hasRole(st.role);
 }
 function isActiveEvent(ev) { return !["draft", "cancelled"].includes(ev.status); }
+// מחיקה לצמיתות — רק אירוע שבוטל או טיוטה, ורק היוצר/ת או אדמין
+function canDelete(ev) {
+  return ["cancelled", "draft"].includes(ev.status) && (isCreator(ev) || isAdmin());
+}
+
+async function deleteEvent(ev) {
+  const what = ev.status === "draft" ? "הטיוטה" : "האירוע שבוטל";
+  if (!confirm(`למחוק את ${what} "${ev.name}" לצמיתות?\nלא ניתן לשחזר.`)) return false;
+  await Store.set("events/" + ev.id, null);
+  toast(what === "הטיוטה" ? "הטיוטה נמחקה" : "האירוע נמחק מהרשימה", "ok");
+  return true;
+}
 
 // "אמילי" → אמילי גולן (אם יש בדיוק אחת). אחרת נשאר טקסט חופשי בלי קישור לעובד/ת.
 function resolveOwner(name) {
@@ -594,7 +606,8 @@ function eventsTable(list, opts = {}) {
         <td>${statusChip(ev)}</td>
         <td>${progressHtml(ev)}</td>
         ${opts.extraCell ? opts.extraCell(ev) : ""}
-        <td style="white-space:nowrap"><button class="btn btn-light btn-sm" data-act="clone" data-id="${esc(ev.id)}" title="פתיחת אירוע חדש על בסיס זה">⧉ שכפול</button></td>
+        <td style="white-space:nowrap"><button class="btn btn-light btn-sm" data-act="clone" data-id="${esc(ev.id)}" title="פתיחת אירוע חדש על בסיס זה">⧉ שכפול</button>
+          ${canDelete(ev) ? `<button class="btn btn-red btn-sm" data-act="deleteEvent" data-id="${esc(ev.id)}" title="מחיקה לצמיתות">🗑 מחיקה</button>` : ""}</td>
       </tr>`;
     }).join("")}</tbody></table></div></div>`;
 }
@@ -999,6 +1012,7 @@ function renderView(ev) {
         <button class="btn btn-light btn-sm" data-act="print">🖨️ ייצוא PDF / הדפסה</button>
         <button class="btn btn-light btn-sm" data-act="clone" data-id="${esc(ev.id)}">⧉ שכפול לאירוע חדש</button>
         ${(isCreator(ev) || isAdmin()) && !["cancelled"].includes(ev.status) ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
+        ${canDelete(ev) ? `<button class="btn btn-red btn-sm" data-act="deleteEvent" data-id="${esc(ev.id)}">🗑 מחיקה מהרשימה</button>` : ""}
       </div>
     </div>
     ${ev.status === "returned" ? `<div class="panel returned"><h3>↩️ הוחזר לתיקון — ממתין ל${esc(ev.createdByName)}</h3><div style="white-space:pre-wrap">${esc(ev.returnReason || "")}</div></div>` : ""}
@@ -1250,6 +1264,12 @@ function bindPageEvents() {
       case "tab": homeTab = t.dataset.tab; location.hash = "#home/" + homeTab; break;
       case "open": if (!e.target.closest("button")) go("#event/" + t.dataset.id); break;
       case "clone": e.stopPropagation(); cloneEvent(t.dataset.id); break;
+      case "deleteEvent": {
+        e.stopPropagation();
+        const target = S.events[t.dataset.id];
+        if (target && canDelete(target) && await deleteEvent(target) && r.name === "event") go("#home");
+        break;
+      }
       case "boardFilter": boardFilter = t.dataset.f; render(true); break;
       case "calNew": {
         // קיצור דרך מהיומן: טופס חדש שהתאריך כבר ממולא בו
