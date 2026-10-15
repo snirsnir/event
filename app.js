@@ -509,8 +509,9 @@ function renderHome(page) {
 // ════════════════════════════════════════════════════════════
 
 let calMonth = null;      // { y, m } — החודש המוצג (m מ-0)
-// היומן סגור כברירת מחדל. מה שהמשתמש/ת בחר/ה נזכר בדפדפן שלו/ה בלבד.
-let calOpen = (() => { try { return localStorage.getItem("calOpen") === "1"; } catch (e) { return false; } })();
+// היומן תמיד נפתח סגור. נפתח/נסגר בלחיצה, עד הכניסה הבאה.
+let calOpen = false;
+const CHEVRON = `<svg class="cal-chev" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const HE_DAYS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
 
@@ -575,16 +576,15 @@ function calendarHtml() {
   if (!calOpen) {
     const upcoming = evs.filter(x => isoFromDay(x.b) >= todayIso).length;
     return `<button class="cal-collapsed" data-act="calToggle">
-      <span class="card-title">📅 יומן האירועים בטכנודע</span>
+      <span class="card-title">📅 יומן האירועים בטכנודע</span>${CHEVRON}
       <span class="small muted">${upcoming > 1 ? upcoming + " אירועים קרובים" : upcoming === 1 ? "אירוע קרוב אחד" : "אין אירועים קרובים"}</span>
-      <span class="cal-chev">▾</span>
     </button>`;
   }
 
   return `<div class="card cal">
     <div class="card-header">
       <button class="cal-head-toggle" data-act="calToggle" title="סגירת היומן">
-        <span class="card-title">📅 יומן האירועים בטכנודע</span><span class="cal-chev open">▾</span>
+        <span class="card-title">📅 יומן האירועים בטכנודע</span>${CHEVRON.replace('class="cal-chev"', 'class="cal-chev open"')}
       </button>
       <div class="actions">
         <button class="btn btn-light btn-sm" data-act="calMove" data-d="-1" title="החודש הקודם">→</button>
@@ -1298,7 +1298,6 @@ function bindPageEvents() {
       }
       case "calToggle":
         calOpen = !calOpen;
-        try { localStorage.setItem("calOpen", calOpen ? "1" : "0"); } catch (err) {}
         render(true);
         if (calOpen) document.querySelector(".cal").scrollIntoView({ behavior: "smooth", block: "start" });
         break;

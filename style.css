@@ -305,7 +305,9 @@ tr.inactive td { opacity: .5; }
 .cal-collapsed:hover { background: #f7faff; }
 .cal-collapsed .small { margin-right: auto; }
 .cal-head-toggle { background: none; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; padding: 0; }
-.cal-chev { font-size: 18px; color: var(--blue); transition: transform .2s; }
+.cal-chev { color: var(--blue); transition: transform .2s; flex-shrink: 0; }
+.cal-collapsed:hover .cal-chev { transform: translateY(2px); }
+.cal-collapsed { gap: 8px; }
 .cal-chev.open { transform: rotate(180deg); }
 .cal-title { min-width: 110px; text-align: center; color: var(--blue-dark); }
 .cal-legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 13px; margin-bottom: 12px; }
