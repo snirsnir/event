@@ -541,7 +541,8 @@ function calendarHtml() {
     const hol = HOLIDAYS.filter(h => iso >= h.start && iso <= h.end);
     const dayEvs = evs.filter(x => x.a <= n && x.b >= n);
     cells += `<div class="cal-cell ${out ? "out" : ""} ${iso === todayIso ? "today" : ""} ${i % 7 === 6 ? "sat" : ""} ${hol.some(h => h.closed) ? "closed" : ""}">
-      <div class="cal-day">${+iso.slice(8)}</div>
+      <div class="cal-top"><span class="cal-day">${+iso.slice(8)}</span>${!out && iso >= todayIso
+        ? `<button class="cal-add" data-act="calNew" data-date="${iso}" title="אירוע חדש ב-${fmtDate(iso)}">+</button>` : ""}</div>
       ${hol.map(h => `<div class="cal-hol">${esc(h.name)}</div>`).join("")}
       ${out ? "" : dayEvs.map(chip).join("")}
     </div>`;
@@ -1225,6 +1226,17 @@ function bindPageEvents() {
       case "open": if (!e.target.closest("button")) go("#event/" + t.dataset.id); break;
       case "clone": e.stopPropagation(); cloneEvent(t.dataset.id); break;
       case "boardFilter": boardFilter = t.dataset.f; render(true); break;
+      case "calNew": {
+        // קיצור דרך מהיומן: טופס חדש שהתאריך כבר ממולא בו
+        const data = newEventData();
+        data.dateStart = t.dataset.date;
+        editing = { id: null, data, dirty: false };
+        mounted = "";
+        if (location.hash === "#event/new") render(true); else location.hash = "#event/new";
+        window.scrollTo(0, 0);
+        toast("אירוע חדש ל-" + fmtDate(t.dataset.date) + " — נשאר רק למלא את הפרטים", "ok");
+        break;
+      }
       case "calMove": {
         const dlt = +t.dataset.d;
         if (!dlt) { const n = new Date(); calMonth = { y: n.getFullYear(), m: n.getMonth() }; }
