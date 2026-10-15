@@ -297,6 +297,16 @@ table.sheet tr.done .item-ro { text-decoration: line-through; text-decoration-co
 tr.inactive td { opacity: .5; }
 
 /* ── Calendar ── */
+.cal-collapsed {
+  width: 100%; display: flex; align-items: center; gap: 12px; text-align: right;
+  background: var(--white); border: 0; border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 14px 22px; margin-bottom: 18px; cursor: pointer;
+}
+.cal-collapsed:hover { background: #f7faff; }
+.cal-collapsed .small { margin-right: auto; }
+.cal-head-toggle { background: none; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; padding: 0; }
+.cal-chev { font-size: 18px; color: var(--blue); transition: transform .2s; }
+.cal-chev.open { transform: rotate(180deg); }
 .cal-title { min-width: 110px; text-align: center; color: var(--blue-dark); }
 .cal-legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 13px; margin-bottom: 12px; }
 .cal-legend span { display: inline-flex; align-items: center; gap: 6px; }

@@ -509,6 +509,8 @@ function renderHome(page) {
 // ════════════════════════════════════════════════════════════
 
 let calMonth = null;      // { y, m } — החודש המוצג (m מ-0)
+// היומן סגור כברירת מחדל. מה שהמשתמש/ת בחר/ה נזכר בדפדפן שלו/ה בלבד.
+let calOpen = (() => { try { return localStorage.getItem("calOpen") === "1"; } catch (e) { return false; } })();
 const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
 const HE_DAYS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
 
@@ -569,9 +571,21 @@ function calendarHtml() {
       <div class="cal-st">${esc(s.text)}</div></a>`;
   }).join("") : `<div class="empty">אין אירועים בחודש הזה</div>`;
 
+  // סגור — שורת כותרת בלבד, עם מספר האירועים הקרובים
+  if (!calOpen) {
+    const upcoming = evs.filter(x => isoFromDay(x.b) >= todayIso).length;
+    return `<button class="cal-collapsed" data-act="calToggle">
+      <span class="card-title">📅 יומן האירועים בטכנודע</span>
+      <span class="small muted">${upcoming > 1 ? upcoming + " אירועים קרובים" : upcoming === 1 ? "אירוע קרוב אחד" : "אין אירועים קרובים"}</span>
+      <span class="cal-chev">▾</span>
+    </button>`;
+  }
+
   return `<div class="card cal">
     <div class="card-header">
-      <span class="card-title">📅 יומן האירועים בטכנודע</span>
+      <button class="cal-head-toggle" data-act="calToggle" title="סגירת היומן">
+        <span class="card-title">📅 יומן האירועים בטכנודע</span><span class="cal-chev open">▾</span>
+      </button>
       <div class="actions">
         <button class="btn btn-light btn-sm" data-act="calMove" data-d="-1" title="החודש הקודם">→</button>
         <strong class="cal-title">${HE_MONTHS[m]} ${y}</strong>
@@ -1282,6 +1296,12 @@ function bindPageEvents() {
         toast("אירוע חדש ל-" + fmtDate(t.dataset.date) + " — נשאר רק למלא את הפרטים", "ok");
         break;
       }
+      case "calToggle":
+        calOpen = !calOpen;
+        try { localStorage.setItem("calOpen", calOpen ? "1" : "0"); } catch (err) {}
+        render(true);
+        if (calOpen) document.querySelector(".cal").scrollIntoView({ behavior: "smooth", block: "start" });
+        break;
       case "calMove": {
         const dlt = +t.dataset.d;
         if (!dlt) { const n = new Date(); calMonth = { y: n.getFullYear(), m: n.getMonth() }; }
