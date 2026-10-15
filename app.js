@@ -488,7 +488,96 @@ function renderHome(page) {
     <div class="tabs">
       ${tabs.map(t => `<button class="tab ${t.id === tab ? "active" : ""}" data-act="tab" data-tab="${t.id}">${t.label}${t.badge ? ` <span class="badge">${t.badge}</span>` : ""}</button>`).join("")}
     </div>
-    ${body}`;
+    ${body}
+    ${calendarHtml()}`;
+}
+
+// ════════════════════════════════════════════════════════════
+//  יומן האירועים — כל האירועים בטכנודע, לכל העובדים
+// ════════════════════════════════════════════════════════════
+
+let calMonth = null;      // { y, m } — החודש המוצג (m מ-0)
+const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+const HE_DAYS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
+
+function isoFromDay(n) { return new Date(n * 86400000).toISOString().slice(0, 10); }
+
+// צבע ותיאור קצר לפי שלב: ירוק = מאושר לגמרי, כתום = בתהליך (ובאיזה שלב), אדום = הוחזר
+function calStatus(ev) {
+  if (ev.status === "approved") return { cls: "cal-ok", text: "מאושר" };
+  if (ev.status === "returned") return { cls: "cal-ret", text: "הוחזר לתיקון" };
+  const st = currentStage(ev);
+  return { cls: "cal-wait", text: st ? "ממתין ל" + st.label : "" };
+}
+
+function calendarHtml() {
+  if (!calMonth) { const t = new Date(); calMonth = { y: t.getFullYear(), m: t.getMonth() }; }
+  const { y, m } = calMonth;
+  const first = Date.UTC(y, m, 1) / 86400000;
+  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const startDow = new Date(Date.UTC(y, m, 1)).getUTCDay();
+  const weeks = Math.ceil((startDow + daysInMonth) / 7);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const last = first + daysInMonth - 1;
+
+  const evs = Object.values(S.events)
+    .filter(ev => ev.dateStart && !["draft", "cancelled"].includes(ev.status))
+    .map(ev => ({ ev, a: dayNum(ev.dateStart), b: dayNum(ev.dateEnd || ev.dateStart) }))
+    .sort((p, q) => p.a - q.a || (p.ev.name || "").localeCompare(q.ev.name || "", "he"));
+  const inMonth = evs.filter(x => x.a <= last && x.b >= first);
+
+  const chip = ({ ev }) => {
+    const s = calStatus(ev);
+    const tip = `${ev.name} · ${formatEventWhen(ev)} · ${s.text}`;
+    return `<a class="cal-ev ${s.cls}" href="#event/${esc(ev.id)}" title="${esc(tip)}">
+      <span class="cal-name">${esc(ev.name)}</span><span class="cal-st">${esc(s.text)}</span></a>`;
+  };
+
+  let cells = "";
+  for (let i = 0; i < weeks * 7; i++) {
+    const n = first - startDow + i;
+    const iso = isoFromDay(n);
+    const out = n < first || n > last;
+    const hol = HOLIDAYS.filter(h => iso >= h.start && iso <= h.end);
+    const dayEvs = evs.filter(x => x.a <= n && x.b >= n);
+    cells += `<div class="cal-cell ${out ? "out" : ""} ${iso === todayIso ? "today" : ""} ${i % 7 === 6 ? "sat" : ""} ${hol.some(h => h.closed) ? "closed" : ""}">
+      <div class="cal-day">${+iso.slice(8)}</div>
+      ${hol.map(h => `<div class="cal-hol">${esc(h.name)}</div>`).join("")}
+      ${out ? "" : dayEvs.map(chip).join("")}
+    </div>`;
+  }
+
+  // תצוגת רשימה — למסך צר
+  const agenda = inMonth.length ? inMonth.map(({ ev }) => {
+    const s = calStatus(ev);
+    return `<a class="cal-ag ${s.cls}" href="#event/${esc(ev.id)}">
+      <div class="cal-ag-when">${esc(formatEventWhen(ev))}</div>
+      <div><strong>${esc(ev.name)}</strong></div>
+      <div class="cal-st">${esc(s.text)}</div></a>`;
+  }).join("") : `<div class="empty">אין אירועים בחודש הזה</div>`;
+
+  return `<div class="card cal">
+    <div class="card-header">
+      <span class="card-title">📅 יומן האירועים בטכנודע</span>
+      <div class="actions">
+        <button class="btn btn-light btn-sm" data-act="calMove" data-d="-1" title="החודש הקודם">→</button>
+        <strong class="cal-title">${HE_MONTHS[m]} ${y}</strong>
+        <button class="btn btn-light btn-sm" data-act="calMove" data-d="1" title="החודש הבא">←</button>
+        <button class="btn btn-light btn-sm" data-act="calMove" data-d="0">היום</button>
+      </div>
+    </div>
+    <div class="cal-legend">
+      <span><i class="cal-ok"></i>מאושר — זימון נשלח</span>
+      <span><i class="cal-wait"></i>בתהליך אישור (כתוב באיזה שלב)</span>
+      <span><i class="cal-ret"></i>הוחזר לתיקון</span>
+      <span class="small muted">${inMonth.length} אירועים החודש</span>
+    </div>
+    <div class="cal-grid">
+      ${HE_DAYS.map(d => `<div class="cal-dow">${d}</div>`).join("")}
+      ${cells}
+    </div>
+    <div class="cal-agenda">${agenda}</div>
+  </div>`;
 }
 
 function eventsTable(list, opts = {}) {
@@ -1136,6 +1225,15 @@ function bindPageEvents() {
       case "open": if (!e.target.closest("button")) go("#event/" + t.dataset.id); break;
       case "clone": e.stopPropagation(); cloneEvent(t.dataset.id); break;
       case "boardFilter": boardFilter = t.dataset.f; render(true); break;
+      case "calMove": {
+        const dlt = +t.dataset.d;
+        if (!dlt) { const n = new Date(); calMonth = { y: n.getFullYear(), m: n.getMonth() }; }
+        else {
+          const mm = calMonth.m + dlt;
+          calMonth = { y: calMonth.y + Math.floor(mm / 12), m: ((mm % 12) + 12) % 12 };
+        }
+        render(true); break;
+      }
       case "refresh": viewLock = false; inviteDraft = null; render(true); break;
       case "print": window.print(); break;
 
