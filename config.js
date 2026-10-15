@@ -42,21 +42,21 @@ const ORG_NAME = "טכנודע";
 const STAGES = [
   { status: "pending_security",  role: "security",  label: 'רכז/ת בטיחות וביטחון', sigLabel: 'חתימת רכז בטיחות וביטחון' },
   { status: "pending_deputy",    role: "deputy",    label: 'משנה למנכ"ל',          sigLabel: 'חתימת המשנה למנכ"ל' },
-  { status: "pending_scheduler", role: "scheduler", label: 'לוח אירועים',          sigLabel: 'אישור לוח אירועים ותזמון' },
+  { status: "pending_scheduler", role: "scheduler", label: 'סמנכ"ל תפעול',          sigLabel: 'אישור סמנכ"ל תפעול ותזמון' },
 ];
 
 const ROLE_LABELS = {
   admin:     "אדמין",
   security:  'קב"ט — מאשר/ת בטיחות',
   deputy:    'משנה למנכ"ל',
-  scheduler: "לוח אירועים — שולח/ת זימונים",
+  scheduler: 'סמנכ"ל תפעול — מאשר/ת מועד ושולח/ת זימונים',
 };
 
 const STATUS_LABELS = {
   draft:             { text: "טיוטה",                 cls: "st-draft" },
   pending_security:  { text: 'ממתין לקב"ט',           cls: "st-pending" },
   pending_deputy:    { text: 'ממתין למשנה למנכ"ל',     cls: "st-pending" },
-  pending_scheduler: { text: "ממתין לאישור מועד",      cls: "st-pending" },
+  pending_scheduler: { text: 'ממתין לסמנכ"ל תפעול',   cls: "st-pending" },
   returned:          { text: "הוחזר לתיקון",           cls: "st-returned" },
   approved:          { text: "מאושר — זימון נשלח",     cls: "st-approved" },
   cancelled:         { text: "בוטל",                   cls: "st-cancelled" },
