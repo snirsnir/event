@@ -3,19 +3,30 @@
 // ============================================================
 // האירוע נוצר ביומן של בעל/ת הסקריפט, עם כל הנמענים כמוזמנים.
 // Google שולח לכל מוזמן/ת הזמנה רגילה (iCalendar), שנפתחת ב-Outlook
-// כזימון עם כפתורי אישור/דחייה.
+// כזימון עם כפתורי אישור/דחייה. בביטול נשלחת הודעת ביטול שמסירה
+// את האירוע גם מה-Outlook של המוזמנים.
+//
+// משתמש ב-Calendar API המלא (Advanced Service) ולא ב-CalendarApp:
+//   - CalendarApp לא שולח הודעת ביטול למוזמנים כשמוחקים אירוע —
+//     האירוע נמחק רק אצל המארגן ונשאר אצל כל השאר.
+//   - ה-API מאפשר sendUpdates: 'all' ביצירה ובביטול, ולהסיר את קישור
+//     ה-Google Meet שגוגל מוסיף אוטומטית.
 //
 // התקנה:
-//   1. script.google.com → New project → להדביק את הקובץ הזה
-//   2. Project Settings → Time zone: Asia/Jerusalem  (חובה — השעות נקבעות לפיו)
-//   3. Project Settings → Script properties → SHARED_TOKEN = מחרוזת אקראית,
-//      ואותה מחרוזת ב-APPS_SCRIPT_TOKEN ב-config.js
-//   4. Deploy → New deployment → Web app | Execute as: Me | Who has access: Anyone
-//   5. להעתיק את כתובת ה-/exec ל-APPS_SCRIPT_URL ב-config.js
+//   1. script.google.com → להדביק את הקובץ הזה
+//   2. Services (+) בתפריט השמאלי → Google Calendar API → Add
+//      (המזהה חייב להישאר Calendar)
+//   3. Project Settings → Time zone: Asia/Jerusalem
+//   4. Project Settings → Script properties → SHARED_TOKEN = אותו ערך כמו APPS_SCRIPT_TOKEN ב-config.js
+//   5. פריסה ראשונה: Deploy → New deployment → Web app | Execute as: Me | Who has access: Anyone
+//      והעתקת כתובת ה-/exec ל-APPS_SCRIPT_URL ב-config.js
 //
 // ⚠️ לעדכון הקוד — לא ליצור פריסה חדשה (זה משנה את הכתובת):
 //    Deploy → Manage deployments → עיפרון → Version: New version → Deploy
 // ============================================================
+
+var CALENDAR_ID = 'primary';
+var TIME_ZONE   = 'Asia/Jerusalem';
 
 function doPost(e) {
   try {
@@ -26,13 +37,20 @@ function doPost(e) {
 }
 
 function doGet() {
-  return buildResponse({ status: 'ok', message: 'Event calendar service is running', timeZone: Session.getScriptTimeZone() });
+  return buildResponse({
+    status: 'ok', message: 'Event calendar service is running',
+    timeZone: Session.getScriptTimeZone(),
+    advancedCalendar: typeof Calendar !== 'undefined',
+  });
 }
 
 function handleRequest(data) {
   const token = PropertiesService.getScriptProperties().getProperty('SHARED_TOKEN');
   if (token && data.token !== token) {
     return buildResponse({ success: false, error: 'unauthorized' });
+  }
+  if (typeof Calendar === 'undefined') {
+    return buildResponse({ success: false, error: 'יש להפעיל את Google Calendar API בתפריט Services של הסקריפט' });
   }
   if (data.action === 'cancel') return cancelEvent(data);
   return createEvent(data);
@@ -42,50 +60,62 @@ function handleRequest(data) {
 // כמה ימים עם שעות — סדרה יומית מ-dateStart עד dateEnd באותן שעות.
 // בלי שעות — אירוע של יום שלם על כל הטווח.
 function createEvent(data) {
-  const cal = CalendarApp.getDefaultCalendar();
-  const opts = {
+  const dateEnd = data.dateEnd || data.dateStart;
+  const multiDay = dateEnd !== data.dateStart;
+  const resource = {
+    summary: data.title,
     description: data.description || '',
     location: data.location || '',
-    guests: (data.guests || []).join(','),
-    sendInvites: true,
+    attendees: (data.guests || []).map(function (g) { return { email: g }; }),
+    guestsCanModify: false,
+    reminders: { useDefault: true },
   };
-  const multiDay = data.dateEnd && data.dateEnd !== data.dateStart;
-  let ev;
 
   if (!data.timeStart) {
-    const end = new Date((data.dateEnd || data.dateStart) + 'T00:00:00');
-    end.setDate(end.getDate() + 1);                    // יום שלם — הסוף לא כולל
-    ev = cal.createAllDayEvent(data.title, new Date(data.dateStart + 'T00:00:00'), end, opts);
-  } else if (!multiDay) {
-    ev = cal.createEvent(data.title, at(data.dateStart, data.timeStart), at(data.dateStart, data.timeEnd || data.timeStart), opts);
+    resource.start = { date: data.dateStart };
+    resource.end   = { date: addDays(dateEnd, 1) };      // יום שלם — הסוף לא כולל
   } else {
-    const recurrence = CalendarApp.newRecurrence().addDailyRule().until(new Date(data.dateEnd + 'T23:59:59'));
-    ev = cal.createEventSeries(data.title, at(data.dateStart, data.timeStart), at(data.dateStart, data.timeEnd || data.timeStart), recurrence, opts);
+    const timeEnd = data.timeEnd || data.timeStart;
+    resource.start = { dateTime: data.dateStart + 'T' + data.timeStart + ':00', timeZone: TIME_ZONE };
+    resource.end   = { dateTime: data.dateStart + 'T' + timeEnd + ':00', timeZone: TIME_ZONE };
+    if (multiDay) {
+      resource.recurrence = ['RRULE:FREQ=DAILY;UNTIL=' + dateEnd.replace(/-/g, '') + 'T235959Z'];
+    }
   }
 
-  Logger.log('✅ זימון נוצר: ' + data.title + ' | ' + opts.guests);
-  return buildResponse({ success: true, eventId: ev.getId(), timeZone: Session.getScriptTimeZone() });
+  const ev = Calendar.Events.insert(resource, CALENDAR_ID, { sendUpdates: 'all', conferenceDataVersion: 1 });
+
+  // אם בהגדרות היומן מופעל "הוסף Google Meet אוטומטית" — מסירים את הקישור
+  if (ev.conferenceData || ev.hangoutLink) {
+    try {
+      Calendar.Events.patch({ conferenceData: null }, CALENDAR_ID, ev.id, { conferenceDataVersion: 1, sendUpdates: 'none' });
+    } catch (err) {
+      Logger.log('⚠️ הסרת Meet נכשלה: ' + err);
+    }
+  }
+
+  Logger.log('✅ זימון נוצר: ' + data.title + ' | ' + (data.guests || []).join(','));
+  return buildResponse({ success: true, eventId: ev.id, timeZone: Session.getScriptTimeZone() });
 }
 
-// ביטול זימון — שולח הודעת ביטול לכל המוזמנים
+// ביטול — מוחק את האירוע (כולל סדרה שלמה) ושולח הודעת ביטול לכל המוזמנים
 function cancelEvent(data) {
-  const cal = CalendarApp.getDefaultCalendar();
+  // אירועים שנוצרו בגרסה הקודמת (CalendarApp) נשמרו עם הסיומת @google.com
+  const id = String(data.eventId || '').replace(/@google\.com$/, '');
+  if (!id) return buildResponse({ success: false, error: 'missing eventId' });
   try {
-    const series = cal.getEventSeriesById(data.eventId);
-    if (series) { series.deleteEventSeries(); return buildResponse({ success: true }); }
-  } catch (err) { /* לא סדרה — ננסה כאירוע בודד */ }
-  const ev = cal.getEventById(data.eventId);
-  if (!ev) return buildResponse({ success: false, error: 'event not found' });
-  ev.deleteEvent();
+    Calendar.Events.remove(CALENDAR_ID, id, { sendUpdates: 'all' });
+  } catch (err) {
+    return buildResponse({ success: false, error: err.toString() });
+  }
+  Logger.log('🗑️ זימון בוטל: ' + id);
   return buildResponse({ success: true });
 }
 
-// "2026-08-01" + "09:00" → Date לפי אזור הזמן של הסקריפט
-function at(dateIso, time) {
-  const t = (time || '00:00').split(':');
-  const d = new Date(dateIso + 'T00:00:00');
-  d.setHours(+t[0], +(t[1] || 0), 0, 0);
-  return d;
+function addDays(iso, n) {
+  const d = new Date(iso + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 function buildResponse(data) {

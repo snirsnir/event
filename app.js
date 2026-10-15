@@ -1212,13 +1212,22 @@ async function doReturn(ev) {
 async function doCancel(ev) {
   const reason = prompt("ביטול האירוע \"" + ev.name + "\".\nסיבת הביטול:");
   if (reason === null) return;
+  const calId = ev.invite && ev.invite.calendarEventId;
+  let calRes = null;
+  if (calId && !IS_DEMO) {
+    $("loading").classList.remove("hidden");
+    calRes = await sendCalendarCancel(calId);
+    $("loading").classList.add("hidden");
+  }
   await Store.update("events/" + ev.id, {
     status: "cancelled", updatedAt: Date.now(),
-    ["history/" + Store.newKey("h")]: histEntry("cancelled", { note: reason }),
+    ["history/" + Store.newKey("h")]: histEntry("cancelled", {
+      note: reason + (calRes ? (calRes.ok ? "\nהזימון בוטל ביומן ונשלחה הודעת ביטול למוזמנים." : "\n⚠️ ביטול הזימון ביומן נכשל: " + calRes.error) : ""),
+    }),
   });
-  if (ev.invite && ev.invite.calendarEventId && !IS_DEMO) sendCalendarCancel(ev.invite.calendarEventId);
   editing = null;
-  toast("האירוע בוטל" + (ev.invite && ev.invite.calendarEventId ? " — נשלח ביטול לזימון" : ""), "ok");
+  if (calRes && !calRes.ok) toast("האירוע בוטל, אבל ביטול הזימון ביומן נכשל: " + calRes.error, "error");
+  else toast("האירוע בוטל" + (calRes ? " — הזימון בוטל אצל כל המוזמנים" : ""), "ok");
   render(true);
 }
 

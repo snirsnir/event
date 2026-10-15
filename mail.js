@@ -147,16 +147,18 @@ async function sendCalendarInvite(invite) {
   }
 }
 
-// ביטול אירוע — מוחק אותו מהיומן ושולח הודעת ביטול לכל המוזמנים
+// ביטול אירוע — מוחק אותו מהיומן ושולח הודעת ביטול לכל המוזמנים. מחזיר { ok, error? }
 async function sendCalendarCancel(calendarEventId) {
-  if (!APPS_SCRIPT_URL || !calendarEventId) return;
+  if (!APPS_SCRIPT_URL || !calendarEventId) return { ok: false, error: "אין מזהה זימון" };
   try {
-    await fetch(APPS_SCRIPT_URL, {
+    const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ action: "cancel", token: APPS_SCRIPT_TOKEN, eventId: calendarEventId }),
     });
+    const data = await res.json();
+    return data.success ? { ok: true } : { ok: false, error: data.error };
   } catch (err) {
-    console.error("❌ שגיאה בביטול הזימון:", err);
+    return { ok: false, error: err.message };
   }
 }
