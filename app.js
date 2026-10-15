@@ -1041,16 +1041,32 @@ function buildInviteDescription(ev) {
   if (ev.location) L.push("מיקום: " + ev.location);
   if (ev.coordinator) L.push("רכז/ת אחראי/ת: " + ev.coordinator);
   if (ev.participants) L.push("משתתפים צפויים: " + ev.participants);
-  ev.sections.filter(s => s.enabled).forEach(sec => {
-    const rows = sec.groups.flatMap(g => g.rows.filter(r => r.item).map(r => ({ g, r })));
-    if (!rows.length) return;
-    L.push("");
-    L.push(`— ${sec.title}${sec.note ? " (" + sec.note + ")" : ""} —`);
-    rows.forEach(({ g, r }) => {
-      L.push(`• ${g.name} / ${r.item}: ${r.owners.map(o => o.name).join(", ") || "—"}` +
-        (r.qty ? ` · כמות: ${r.qty}` : "") + (r.location ? ` · מיקום: ${r.location}` : ""));
-    });
+  // חלוקת האחריות לפי אנשים: כל אחד/ת והמשימות שלו/ה. משימה של כמה אנשים מופיעה אצל כל אחד מהם.
+  const byOwner = new Map();
+  const add = (name, line) => { if (!byOwner.has(name)) byOwner.set(name, []); byOwner.get(name).push(line); };
+  allRows(ev).forEach(({ group, row }) => {
+    if (!row.item) return;
+    const line = `  • ${group.name ? group.name + " — " : ""}${row.item}` +
+      (row.qty ? ` · כמות: ${row.qty}` : "") + (row.location ? ` · מיקום: ${row.location}` : "");
+    if (row.owners.length) row.owners.forEach(o => add(o.name, line));
+    else add("", line);
   });
+  if (byOwner.size) {
+    L.push("");
+    L.push("חלוקת אחריות:");
+    [...byOwner.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, "he")).forEach(name => {
+      L.push("");
+      L.push(name + ":");
+      byOwner.get(name).forEach(line => L.push(line));
+    });
+    if (byOwner.has("")) {
+      L.push("");
+      L.push("ללא אחראי/ת:");
+      byOwner.get("").forEach(line => L.push(line));
+    }
+  }
+  const notes = ev.sections.filter(s => s.enabled && s.note).map(s => `• ${s.title}: ${s.note}`);
+  if (notes.length) { L.push(""); L.push("הערות:"); notes.forEach(n => L.push(n)); }
   L.push("");
   L.push("לטופס המלא: " + SYSTEM_URL + "#event/" + ev.id);
   return L.join("\n");
