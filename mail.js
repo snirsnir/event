@@ -162,3 +162,26 @@ async function sendCalendarCancel(calendarEventId) {
     return { ok: false, error: err.message };
   }
 }
+
+// ── עוזר AI ── הבקשה עוברת דרך ה-Apps Script, שבודק שהמשתמש/ת עובד/ת פעיל/ה
+// ושולח ל-Claude. מפתח ה-API ומאגר הידע נמצאים רק בהגדרות הסקריפט.
+async function callAI(task, payload) {
+  if (IS_DEMO) throw new Error("העוזר זמין רק במערכת האמיתית, לא במצב הדגמה");
+  if (!APPS_SCRIPT_URL) throw new Error("כתובת Apps Script לא הוגדרה");
+  const user = firebase.auth().currentUser;
+  if (!user) throw new Error("נדרשת כניסה למערכת");
+  const idToken = await user.getIdToken();
+  let data;
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "ai", token: APPS_SCRIPT_TOKEN, idToken, task, payload }),
+    });
+    data = await res.json();
+  } catch (err) {
+    throw new Error("אין תשובה מהעוזר (" + err.message + ")");
+  }
+  if (!data.success) throw new Error(data.error || "שגיאה בעוזר");
+  return data.result;
+}

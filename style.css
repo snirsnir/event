@@ -323,6 +323,18 @@ tr.inactive td { opacity: .5; }
 .checks li.tip { color: #4a5568; }
 .checks li.tip::before { content: "💡"; font-size: 13px; }
 
+/* ── עוזר AI ── */
+.ai-box { border: 1px solid #d9d2f7; background: linear-gradient(135deg, #f7f5ff, #f2f7ff); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+.ai-h { font-weight: 600; color: #4b3aa8; margin-bottom: 8px; }
+.ai-box textarea { width: 100%; min-height: 76px; border: 1px solid #d5cff3; border-radius: 9px; padding: 9px 11px; background: #fff; resize: vertical; margin-bottom: 8px; }
+.ai-box textarea:focus { outline: none; border-color: #7c6ad8; box-shadow: 0 0 0 3px rgba(124,106,216,.15); }
+.ai-notes { margin-top: 10px; background: #fff; border-radius: 8px; padding: 9px 12px; font-size: 14px; color: #3d3470; }
+.ai-inline { display: inline-flex; gap: 6px; align-items: center; }
+.ai-inline select { padding: 5px 8px; font-size: 13px; }
+.checks.ai { border-color: #d9d2f7; background: #f8f6ff; }
+[data-act="aiFill"], [data-act="aiInvite"] { background: #6a55d6; }
+[data-act="aiFill"]:hover, [data-act="aiInvite"]:hover { background: #5442b8; }
+
 /* ── Wizard ── */
 .wiz-bar { display: flex; gap: 6px; margin: 14px 0 16px; overflow-x: auto; padding-bottom: 4px; }
 .wiz-step {

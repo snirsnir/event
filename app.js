@@ -377,6 +377,160 @@ function lessonsHtml(name) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  עוזר AI — מילוי מתיאור, ניסוח זימון, בדיקה ותקציר
+// ════════════════════════════════════════════════════════════
+
+let aiStyleChoice = "regular";   // הסגנון האחרון שנבחר לניסוח הזימון
+const aiReviews = {};   // evId|"draft" → { brief, items } — תוצאת הבדיקה האחרונה בסשן
+
+// האירוע בצורה קומפקטית לשליחה לעוזר: רק מה שהוא צריך, עם שמות האחראים
+function aiEventPayload(d, id) {
+  const out = { id: id || "" };
+  FORM_FIELDS.forEach(f => { if (d[f]) out[f] = d[f]; });
+  if (d.dateStart) out.weekday = weekdayOf(d.dateStart);
+  out.sections = d.sections.filter(s => s.enabled).map(s => ({
+    title: s.title, note: s.note || undefined,
+    rows: s.groups.flatMap(g => g.rows.filter(r => r.item).map(r => ({
+      group: g.name, item: r.item, owners: r.owners.map(o => o.name),
+      qty: r.qty || undefined, location: r.location || undefined,
+    }))),
+  }));
+  return out;
+}
+
+async function aiBusy(btn, label, fn) {
+  const old = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "⏳ " + label;
+  try { await fn(); }
+  catch (err) { toast(err.message, "error"); btn.disabled = false; btn.innerHTML = old; }
+}
+
+// ── 1. מילוי הטופס מתיאור חופשי (שלב הפרטים באשף) ──
+function aiFillBoxHtml() {
+  if (editing.id && S.events[editing.id] && S.events[editing.id].status !== "draft") return "";
+  return `<div class="ai-box no-print">
+    <div class="ai-h">✨ תאר/י את האירוע במילים שלך, והעוזר ימלא את הטופס</div>
+    <textarea id="aiDesc" placeholder="למשל: ערב הורים וילדים לתוכנית המצוינות ב-12.11, 18:30–21:00, בערך 160 משתתפים, סדנאות במעבדות 3–6 וקבלת פנים באודיטוריום. מרי מנהלת את האירוע.">${esc(editing.aiDesc || "")}</textarea>
+    <div class="actions" style="justify-content:space-between">
+      <span class="small muted">העוזר ממלא את הפרטים ומתאים את השורות לפי אירועים דומים מהעבר. אחר כך עוברים על הכול ומתקנים.</span>
+      <button class="btn btn-sm" data-act="aiFill">✨ מלא לי את הטופס</button>
+    </div>
+    ${editing.aiNotes ? `<div class="ai-notes">💬 ${esc(editing.aiNotes)}</div>` : ""}
+  </div>`;
+}
+
+async function doAiFill(btn) {
+  const description = ($("aiDesc").value || "").trim();
+  if (description.length < 10) { toast("כתבו כמה מילים על האירוע", "error"); return; }
+  editing.aiDesc = description;
+  const d = editing.data;
+  await aiBusy(btn, "העוזר ממלא...", async () => {
+    const r = await callAI("fill", {
+      description,
+      today: new Date().toISOString().slice(0, 10),
+      template: d.sections.map(s => ({ title: s.title, groups: s.groups.map(g => ({ name: g.name, rows: g.rows.map(x => ({ item: x.item, owners: x.owners.map(o => o.name) })) })) })),
+      staff: activeStaff().map(p => ({ name: p.name, roles: Object.keys(p.roles || {}).filter(k => p.roles[k]) })),
+    });
+    const stats = applyAiFill(d, r);
+    editing.aiNotes = r.notes || "";
+    markDirty();
+    renderEditor();
+    toast(`העוזר מילא את הטופס${stats ? " · " + stats : ""} — כדאי לעבור על השלבים`, "ok");
+  });
+}
+
+function applyAiFill(d, r) {
+  const norm = s => String(s || "").trim();
+  ["name", "goals", "dateStart", "dateEnd", "timeStart", "timeEnd", "location", "participants", "eventManager"].forEach(f => {
+    if (norm(r[f])) d[f] = norm(r[f]);
+  });
+  if (d.dateEnd && d.dateEnd <= d.dateStart) d.dateEnd = "";
+  const sec = t => d.sections.find(s => norm(s.title) === norm(t));
+  const findRow = x => {
+    const s = sec(x.section); if (!s) return null;
+    for (const g of s.groups) {
+      if (x.group && norm(g.name) !== norm(x.group)) continue;
+      const i = g.rows.findIndex(row => norm(row.item) === norm(x.item));
+      if (i >= 0) return { g, i };
+    }
+    return null;
+  };
+  let off = 0, removed = 0, added = 0;
+  (r.sectionsOff || []).forEach(t => { const s = sec(t); if (s && s.enabled) { s.enabled = false; off++; } });
+  (r.remove || []).forEach(x => { const f = findRow(x); if (f) { f.g.rows.splice(f.i, 1); removed++; } });
+  (r.qty || []).forEach(x => { const f = findRow(x); if (f && norm(x.qty)) f.g.rows[f.i].qty = norm(x.qty); });
+  (r.add || []).forEach(x => {
+    if (!norm(x.item) || findRow(x)) return;
+    let s = sec(x.section);
+    if (!s) {
+      s = { id: rid(), title: norm(x.section) || "חלק נוסף", note: "", enabled: true, groups: [] };
+      d.sections.push(s);
+    }
+    s.enabled = true;
+    let g = s.groups.find(g => norm(g.name) === norm(x.group));
+    if (!g) { g = { id: rid(), name: norm(x.group), rows: [] }; s.groups.push(g); }
+    g.rows.push({ id: rid(), item: norm(x.item), owners: (x.owners || []).map(resolveOwner).filter(Boolean), qty: norm(x.qty), location: "" });
+    added++;
+  });
+  const parts = [];
+  if (added) parts.push(`${added} שורות נוספו`);
+  if (removed) parts.push(`${removed} הוסרו`);
+  if (off) parts.push(`${off} חלקים כובו`);
+  return parts.join(", ");
+}
+
+// ── 2. ניסוח הזימון (שלב סמנכ"ל התפעול) ──
+function aiInviteToolsHtml() {
+  return `<span class="ai-inline">
+    <select id="aiStyle" class="inp" title="סגנון הניסוח">
+      ${[["regular", "רגיל"], ["short", "קצר"], ["detailed", "מפורט"]].map(([v, l]) => `<option value="${v}" ${v === aiStyleChoice ? "selected" : ""}>${l}</option>`).join("")}
+    </select>
+    <button class="btn btn-sm" data-act="aiInvite">✨ נסח לי</button>
+  </span>`;
+}
+
+async function doAiInvite(ev, btn) {
+  const style = aiStyleChoice = $("aiStyle").value;
+  await aiBusy(btn, "מנסח...", async () => {
+    const inv = currentInvite(ev);
+    const r = await callAI("invite", {
+      style, event: aiEventPayload(ev, ev.id),
+      current: { title: inv.title, body: inv.description },
+    });
+    if (r.title) inv.title = r.title;
+    if (r.body) inv.description = r.body;
+    rerenderApproval(ev);
+    toast("העוזר ניסח את הזימון — אפשר לערוך לפני השליחה", "ok");
+  });
+}
+
+// ── 3. בדיקה ותקציר (סיכום באשף, ופאנל המאשרים) ──
+function aiReviewHtml(key, forApprover) {
+  const r = aiReviews[key];
+  const label = forApprover ? "✨ תקציר ובדיקה של העוזר" : "✨ בדיקה נוספת של העוזר";
+  if (!r) return `<div class="no-print" style="margin:-6px 0 16px"><button class="btn btn-light btn-sm" data-act="aiReview" data-key="${esc(key)}">${label}</button></div>`;
+  return `<div class="checks ai">
+    <div class="checks-h"><strong>✨ העוזר</strong><button class="btn btn-light btn-sm no-print" data-act="aiReview" data-key="${esc(key)}" style="margin-right:auto">בדיקה מחדש</button></div>
+    ${r.brief ? `<p style="margin-bottom:8px">${esc(r.brief)}</p>` : ""}
+    ${(r.items || []).length ? `<ul>${r.items.map(c => `<li class="${c.level === "warn" ? "warn" : "tip"}">${esc(c.text)}</li>`).join("")}</ul>` : `<div class="small">לא נמצאו נקודות נוספות.</div>`}
+  </div>`;
+}
+
+async function doAiReview(key, btn) {
+  const isDraft = key === "draft";
+  const d = isDraft ? editing.data : S.events[key];
+  const id = isDraft ? editing.id : key;
+  await aiBusy(btn, "העוזר בודק...", async () => {
+    aiReviews[key] = await callAI("review", {
+      event: aiEventPayload(d, id),
+      known: eventChecks(d, id).map(c => c.text),
+    });
+    if (isDraft) renderEditor(); else rerenderApproval(S.events[key]);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
 //  אתחול וכניסה
 // ════════════════════════════════════════════════════════════
 
@@ -1022,6 +1176,7 @@ function renderEditor(focusSel) {
     body = `<div class="card">
       <div class="wiz-h">שלב 1 — פרטי האירוע</div>
       <div class="small muted" style="margin-bottom:12px">שדות עם * הם חובה.</div>
+      ${aiFillBoxHtml()}
       ${lessonsHtml(d.name)}
       ${headerHtml(d, true, editing.id)}
     </div>`;
@@ -1047,6 +1202,7 @@ function renderEditor(focusSel) {
       <div class="wiz-h">סיכום — בדיקה אחרונה לפני שליחה</div>
       <div class="small muted" style="margin-bottom:12px">כך ייראה הטופס אצל המאשרים. לתיקון — לוחצים על השלב בפס למעלה.</div>
       ${checksHtml(eventChecks(d, editing.id))}
+      ${aiReviewHtml("draft")}
       ${lessonsHtml(d.name)}
       ${headerHtml(d, false, editing.id)}
       ${sectionsHtml(d, false, pseudo) || `<div class="empty">לא נכלל אף חלק בטופס</div>`}
@@ -1378,6 +1534,7 @@ function inviteEditorHtml(ev) {
     <div class="actions" style="justify-content:space-between;margin-bottom:10px">
       <strong>📅 הזימון שיישלח ל-Outlook / יומן Google</strong>
       <div class="actions">
+        ${aiInviteToolsHtml()}
         <button class="btn btn-light btn-sm" data-act="saveInvite">💾 שמירת טיוטת זימון</button>
         <button class="btn btn-light btn-sm" data-act="resetInvite" title="בנייה מחדש מתוך הטופס">↺ מחדש מהטופס</button>
       </div>
@@ -1408,6 +1565,7 @@ function approvalPanelHtml(ev, stage) {
     <h3>🖊️ האישור שלך נדרש — ${esc(stage.label)}</h3>
     ${conf.overlap.length || conf.adjacent.length ? conflictsHtml(ev, ev.id) + "<div style='height:12px'></div>" : ""}
     ${checksHtml(eventChecks(ev, ev.id), "🔎 נקודות לבדיקה לפני אישור")}
+    ${aiReviewHtml(ev.id, true)}
     ${sched ? inviteEditorHtml(ev) : ""}
     <div class="field"><label>הערה / סיבת החזרה ${sched ? "(למשל: המועד לא מתאים כי...)" : ""}</label>
       <textarea id="approveNote" placeholder="בהחזרה — חובה לפרט למה"></textarea></div>
@@ -1567,6 +1725,9 @@ function bindPageEvents() {
       }
       case "refresh": viewLock = false; inviteDraft = null; render(true); break;
       case "print": window.print(); break;
+      case "aiFill": doAiFill(t); break;
+      case "aiInvite": viewLock = true; doAiInvite(ev, t); break;
+      case "aiReview": doAiReview(t.dataset.key, t); break;
       case "saveSummary": saveSummary(ev); break;
       case "editSummary": summaryEditing = true; viewLock = true; renderView(ev); break;
       case "cancelSummary": summaryEditing = false; viewLock = false; render(true); break;
@@ -1649,6 +1810,8 @@ function bindPageEvents() {
     } else if (t.dataset.inv && inviteDraft) {
       inviteDraft.data[t.dataset.inv] = t.value;
       viewLock = true;
+    } else if (t.id === "aiDesc" && editing) {
+      editing.aiDesc = t.value;
     } else if (t.dataset.sum) {
       viewLock = true;
     } else if (t.id === "approveNote") {
