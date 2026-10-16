@@ -202,8 +202,11 @@ function loadKnowledgeBase() {
   if (hit) return hit;
   var file = DriveApp.getFileById(id);
   var mime = file.getMimeType();
+  // מסמך Docs — ייצוא כטקסט דרך Drive API, עם אותה הרשאת Drive שכבר קיימת (בלי הרשאת Docs נוספת)
   var text = mime === MimeType.GOOGLE_DOCS
-    ? DocumentApp.openById(id).getBody().getText()
+    ? UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=text/plain', {
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      }).getContentText('UTF-8')
     : file.getBlob().getDataAsString('UTF-8');
   // בדיקת שפיות: מאגר הידע בעברית. אם אין בו עברית — קראנו משהו אחר (PDF, קובץ בינארי)
   var hebrew = (text.match(/[֐-׿]/g) || []).length;
