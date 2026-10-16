@@ -44,9 +44,16 @@ function doGet() {
     timeZone: Session.getScriptTimeZone(),
     advancedCalendar: typeof Calendar !== 'undefined',
     ai: !!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY'),
-    knowledgeBase: !!PropertiesService.getScriptProperties().getProperty('KB_FILE_ID'),
+    knowledgeBase: kbStatus(),
     reminders: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'dailyReminders'; }),
   });
+}
+
+// לבדיקה מבחוץ: האם מאגר הידע נקרא, ובאיזה גודל — בלי לחשוף את התוכן
+function kbStatus() {
+  if (!PropertiesService.getScriptProperties().getProperty('KB_FILE_ID')) return 'missing';
+  try { return 'ok, ' + loadKnowledgeBase().length + ' chars'; }
+  catch (err) { return 'error: ' + err.message; }
 }
 
 function handleRequest(data) {
@@ -183,14 +190,25 @@ function verifyStaff(idToken) {
   return staff;
 }
 
+// קורא את מאגר הידע מ-Drive. עובד גם עם קובץ טקסט/Markdown וגם עם מסמך Google Docs
+// (Drive ממיר לפעמים קבצים שמעלים — ואז getBlob() מחזיר PDF ולא טקסט).
+// המפתח במטמון כולל את מזהה הקובץ, כך שהחלפת קובץ לא נתקעת על תוכן ישן.
 function loadKnowledgeBase() {
-  var cache = CacheService.getScriptCache();
-  var hit = cache.get('kb');
-  if (hit) return hit;
   var id = PropertiesService.getScriptProperties().getProperty('KB_FILE_ID');
   if (!id) return '';
-  var text = DriveApp.getFileById(id).getBlob().getDataAsString('UTF-8');
-  try { cache.put('kb', text, 21600); } catch (e) { /* גדול מדי למטמון — נקרא מ-Drive בכל פעם */ }
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'kb:' + id;
+  var hit = cache.get(cacheKey);
+  if (hit) return hit;
+  var file = DriveApp.getFileById(id);
+  var mime = file.getMimeType();
+  var text = mime === MimeType.GOOGLE_DOCS
+    ? DocumentApp.openById(id).getBody().getText()
+    : file.getBlob().getDataAsString('UTF-8');
+  // בדיקת שפיות: מאגר הידע בעברית. אם אין בו עברית — קראנו משהו אחר (PDF, קובץ בינארי)
+  var hebrew = (text.match(/[֐-׿]/g) || []).length;
+  if (hebrew < 500) throw new Error('לא הצלחתי לקרוא את מאגר הידע מ-Drive (סוג קובץ: ' + mime + '). יש להעלות קובץ טקסט או מסמך Google Docs.');
+  try { cache.put(cacheKey, text, 21600); } catch (e) { /* גדול מדי למטמון — נקרא מ-Drive בכל פעם */ }
   return text;
 }
 
