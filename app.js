@@ -31,7 +31,7 @@ let skipHashGuard = false;
 let renderQueued = false;
 
 const FORM_FIELDS = ["name", "goals", "dateStart", "dateEnd", "timeStart", "timeEnd", "location",
-  "participants", "coordinator", "calendarCoordinated", "calendarDetails", "parallelEvents", "parallelDetails"];
+  "participants", "coordinator", "eventManager", "eventManagerSub", "calendarCoordinated", "calendarDetails", "parallelEvents", "parallelDetails"];
 
 const $ = id => document.getElementById(id);
 const esc = escHtml;
@@ -152,10 +152,11 @@ function canMarkDone(ev, row) {
 function newEventData() {
   return {
     name: "", goals: "", dateStart: "", dateEnd: "", timeStart: "", timeEnd: "", location: "",
-    participants: "", coordinator: S.me ? S.me.name : "",
+    participants: "", coordinator: S.me ? S.me.name : "", eventManager: "", eventManagerSub: "",
     calendarCoordinated: "", calendarDetails: "", parallelEvents: "", parallelDetails: "",
     status: "draft",
-    sections: DEFAULT_SECTIONS.map(sec => ({
+    // התבנית מעמדת הניהול (settings/template), ואם אין — התבנית המקורית מהאקסל
+    sections: currentTemplate().map(sec => ({
       id: rid(), title: sec.title, note: sec.note || "", enabled: true,
       groups: sec.groups.map(g => ({
         id: rid(), name: g.name,
@@ -236,6 +237,142 @@ function conflictsHtml(d, selfId) {
   return `<div class="conflicts warn">
     ${overlap.length ? `<strong>⚠️ אירועים חופפים (${overlap.length}):</strong><ul>${overlap.map(li).join("")}</ul>` : ""}
     ${adjacent.length ? `<strong style="display:block;margin-top:6px">↔️ אירועים נושקים (יום לפני/אחרי):</strong><ul>${adjacent.map(li).join("")}</ul>` : ""}
+  </div>`;
+}
+
+// ── "מה שכחתי?" — בדיקות לפי הנהלים והלקחים שבתיעוד (technoda-events-kb, סעיפים 4 ו-6) ──
+// level: "warn" — כנראה חסר משהו מהותי. "tip" — תזכורת שכדאי לבדוק.
+function eventChecks(d, selfId) {
+  const out = [];
+  const warn = text => out.push({ level: "warn", text });
+  const tip = text => out.push({ level: "tip", text });
+  const n = +d.participants || 0;
+  const rows = allRows(d).filter(x => x.row.item);
+  const has = re => rows.some(({ group, row }) => re.test(group.name + " " + row.item));
+  const today = new Date().toISOString().slice(0, 10);
+
+  const noOwner = rows.filter(x => !x.row.owners.length);
+  if (noOwner.length) {
+    warn(`${noOwner.length} משימות בלי אחראי/ת: ${noOwner.slice(0, 3).map(x => x.row.item).join(", ")}${noOwner.length > 3 ? " ועוד" : ""}.`);
+  }
+  if (!d.eventManager) warn("לא צוין/ה מנהל/ת אירוע בשטח (ומחליף/ה אם הוא/היא לא יכול/ה להיות).");
+  if (!n) tip("לא צוין מספר משתתפים — הוא קובע כמויות כיבוד וכיסאות, ואם צריך מאבטח.");
+  if (d.dateStart && !d.timeStart) tip("לא צוינו שעות לאירוע.");
+
+  if (d.dateStart) {
+    const a = d.dateStart, b = d.dateEnd || d.dateStart;
+    HOLIDAYS.filter(h => h.start <= b && h.end >= a).forEach(h =>
+      (h.closed ? warn : tip)(`האירוע חל ב${h.name}${h.closed ? " — המשרד סגור" : ""}.`));
+    const c = findConflicts(d, selfId);
+    if (c.overlap.length) warn(`יש ${c.overlap.length} אירועים חופפים במערכת — לבדוק שהמתחמים וכוח האדם לא מתנגשים.`);
+    else if (c.adjacent.length) tip("יש אירוע צמוד (יום לפני או אחרי) — לבדוק זמני הקמה ופירוק.");
+
+    const daysLeft = dayNum(a) - dayNum(today);
+    if (n > 100 && daysLeft >= 0 && daysLeft < 21) {
+      warn(`לפי הנוהל, אירוע מעל 100 משתתפים מוגש 3–4 שבועות מראש. נשארו ${daysLeft} ימים.`);
+    }
+    if (new Date(a + "T12:00:00Z").getUTCDay() === 5 && (!d.timeEnd || d.timeEnd > "14:00")) {
+      tip("אירוע בשישי: האחזקה מסיימת ב-14:00 — לתאם מי סוגר, מכבה ומדווח למוקד.");
+    }
+  }
+
+  if (n > 100) {
+    if (!has(/בטיחות/)) warn("אירוע מעל 100 משתתפים בלי משימות בטיחות בטופס (תיק בטיחות, משקיף).");
+    if (!has(/שמיר|אבטח|מאבטח|שומר/)) warn("מעל 100 משתתפים נדרש מאבטח חמוש — אין שורת שמירה/אבטחה. לשריין מוקדם, יש מחסור.");
+    tip('הזימון יועבר לקב"ט העירייה — לצרף את ההנחיות שלו לטופס כשיגיעו.');
+  }
+  if (n >= 500) tip("אירוע גדול: לשקול אמבולנס — קשה להשיג פחות משבועיים לפני.");
+  if (d.timeEnd && d.timeEnd >= "18:00") tip("אירוע ערב: איש אחזקה ומנקה שנשארים, והארכת שעות השומר.");
+  if (has(/כיבוד|מזון|ארוח|לחמני|סופגני/)) tip("יש כיבוד — לבדוק אלרגיות מסכנות חיים (בוטנים, אגוזים) מול המלווים.");
+  if (n > 0 && has(/כיבוד/) && !rows.some(x => /כיבוד/.test(x.row.item) && x.row.qty)) {
+    tip(`לא צוינה כמות כיבוד. בדרך כלל מזמינים לכ-90% מהמשתתפים (כ-${Math.round(n * 0.9)}).`);
+  }
+  return out;
+}
+
+function checksHtml(list, title = "🔎 מה שכחתי?") {
+  if (!list.length) return `<div class="checks ok"><strong>${title}</strong> <span>✓ לא נמצא משהו חסר לפי הנהלים.</span></div>`;
+  const warns = list.filter(c => c.level === "warn"), tips = list.filter(c => c.level === "tip");
+  return `<div class="checks">
+    <div class="checks-h"><strong>${title}</strong><span class="small muted">${warns.length ? warns.length + " לטיפול" : ""}${warns.length && tips.length ? " · " : ""}${tips.length ? tips.length + " תזכורות" : ""}</span></div>
+    <ul>${warns.map(c => `<li class="warn">${esc(c.text)}</li>`).join("")}${tips.map(c => `<li class="tip">${esc(c.text)}</li>`).join("")}</ul>
+  </div>`;
+}
+
+// ── סיכום אחרי האירוע: מה עבד, מה לא, מה לשנות. נשמר ב-events/{id}/summary ──
+// זה גם המקור לזיכרון של העוזר בהמשך — לקחים מהאירועים שלכם, לא רק מהמייל.
+function eventEnded(ev) {
+  const today = new Date().toISOString().slice(0, 10);
+  return ev.status === "approved" && !!ev.dateStart && (ev.dateEnd || ev.dateStart) < today;
+}
+function canSummarize(ev) {
+  return eventEnded(ev) && (isCreator(ev) || isAdmin() || (S.me && ev.eventManager && ev.eventManager === S.me.name));
+}
+function awaitingSummary() {
+  return Object.values(S.events).filter(ev => canSummarize(ev) && !ev.summary && isCreator(ev));
+}
+
+function summaryCardHtml(ev) {
+  if (!eventEnded(ev)) return "";
+  const s = ev.summary;
+  if (s && !summaryEditing) {
+    const block = (t, v) => v ? `<div class="field"><label>${t}</label><div style="white-space:pre-wrap">${esc(v)}</div></div>` : "";
+    return `<div class="card">
+      <div class="card-header"><span class="card-title">📝 סיכום אחרי האירוע</span>
+        ${canSummarize(ev) ? `<button class="btn btn-light btn-sm no-print" data-act="editSummary">עריכה</button>` : ""}</div>
+      ${s.actualParticipants ? `<div class="small" style="margin-bottom:10px">השתתפו בפועל: <strong>${esc(s.actualParticipants)}</strong>${ev.participants ? ` (צפי: ${esc(ev.participants)})` : ""}</div>` : ""}
+      ${block("✅ מה עבד טוב", s.worked)}${block("⚠️ מה לא עבד", s.didnt)}${block("🔁 מה לשנות בפעם הבאה", s.change)}
+      <div class="small muted">${esc(s.by)} · ${esc(fmtTs(s.at))}</div>
+    </div>`;
+  }
+  if (!canSummarize(ev)) return "";
+  const v = s || {};
+  return `<div class="panel no-print" style="border-top-color:var(--blue)">
+    <h3>📝 האירוע הסתיים — איך היה?</h3>
+    <div class="small muted" style="margin-bottom:12px">שלוש שאלות קצרות. הלקחים יעזרו באירוע הבא, ויוצגו כשמשכפלים את האירוע.</div>
+    <div class="field" style="max-width:220px"><label>כמה השתתפו בפועל?</label><input type="text" data-sum="actualParticipants" value="${esc(v.actualParticipants || "")}" placeholder="${esc(ev.participants || "")}"></div>
+    <div class="field"><label>✅ מה עבד טוב?</label><textarea data-sum="worked">${esc(v.worked || "")}</textarea></div>
+    <div class="field"><label>⚠️ מה לא עבד / מה שכחנו?</label><textarea data-sum="didnt">${esc(v.didnt || "")}</textarea></div>
+    <div class="field"><label>🔁 מה לשנות בפעם הבאה?</label><textarea data-sum="change">${esc(v.change || "")}</textarea></div>
+    <div class="actions" style="justify-content:flex-end">
+      ${s ? `<button class="btn btn-light" data-act="cancelSummary">ביטול</button>` : ""}
+      <button class="btn btn-green" data-act="saveSummary">💾 שמירת הסיכום</button>
+    </div>
+  </div>`;
+}
+
+let summaryEditing = false;
+
+async function saveSummary(ev) {
+  const val = f => (document.querySelector(`[data-sum="${f}"]`) || {}).value || "";
+  const summary = {
+    actualParticipants: val("actualParticipants").trim(), worked: val("worked").trim(),
+    didnt: val("didnt").trim(), change: val("change").trim(), by: S.me.name, at: Date.now(),
+  };
+  if (!summary.worked && !summary.didnt && !summary.change) { toast("יש למלא לפחות שאלה אחת", "error"); return; }
+  await Store.update("events/" + ev.id, {
+    summary, ["history/" + Store.newKey("h")]: histEntry("summary"),
+  });
+  summaryEditing = false; viewLock = false;
+  toast("הסיכום נשמר — תודה!", "ok");
+  render(true);
+}
+
+// לקחים מאירועים קודמים באותו שם — מוצגים כשמשכפלים או פותחים אירוע דומה
+function lessonsFor(name) {
+  const key = String(name || "").replace(/\s*\(העתק\)$/, "").trim();
+  if (!key) return [];
+  return Object.values(S.events)
+    .filter(ev => ev.summary && (ev.summary.didnt || ev.summary.change) && ev.name && (ev.name.includes(key) || key.includes(ev.name)))
+    .sort((a, b) => (b.dateStart || "").localeCompare(a.dateStart || ""));
+}
+
+function lessonsHtml(name) {
+  const list = lessonsFor(name).slice(0, 3);
+  if (!list.length) return "";
+  return `<div class="checks" style="border-color:#cfdcf5;background:#f5f8ff">
+    <div class="checks-h"><strong>📚 לקחים מאירועים קודמים</strong></div>
+    <ul>${list.map(ev => `<li class="tip"><a href="#event/${esc(ev.id)}">${esc(ev.name)} (${esc(fmtDate(ev.dateStart))})</a>: ${esc([ev.summary.didnt, ev.summary.change].filter(Boolean).join(" · "))}</li>`).join("")}</ul>
   </div>`;
 }
 
@@ -628,7 +765,9 @@ function eventsTable(list, opts = {}) {
 
 function homeMine() {
   const list = Object.values(S.events).filter(isCreator).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  return eventsTable(list, { empty: 'עדיין לא פתחת אירועים. לחצו על "פתיחת אירוע חדש" כדי להתחיל.' });
+  const waiting = awaitingSummary();
+  const banner = waiting.length ? `<div class="banner"><span>📝 ${waiting.length === 1 ? "אירוע אחד הסתיים ומחכה" : waiting.length + " אירועים הסתיימו ומחכים"} לסיכום קצר: ${waiting.map(ev => `<a href="#event/${esc(ev.id)}">${esc(ev.name)}</a>`).join(", ")}</span></div>` : "";
+  return banner + eventsTable(list, { empty: 'עדיין לא פתחת אירועים. לחצו על "פתיחת אירוע חדש" כדי להתחיל.' });
 }
 
 function homeApprovals(queue) {
@@ -732,6 +871,8 @@ function headerHtml(d, edit, selfId) {
         ? `<input type="number" min="0" data-f="participants" value="${esc(d.participants)}" style="width:140px">`
         : `<span class="ro">${esc(d.participants) || "—"}</span>`}</div>
       <div class="lbl">שם הרכז האחראי:</div><div class="val">${inp("coordinator", 'list="staffNames"')}</div>
+      <div class="lbl">מנהל/ת האירוע בשטח:</div><div class="val">${inp("eventManager", 'list="staffNames" placeholder="מי נמצא/ת בשטח ביום האירוע"')}</div>
+      <div class="lbl">מחליף/ה:</div><div class="val">${inp("eventManagerSub", 'list="staffNames" placeholder="אם מנהל/ת האירוע לא יכול/ה להיות בשטח"')}</div>
       <div class="lbl">תאריך הגשת הבקשה:</div><div class="val"><span class="ro">${d.submittedAt ? esc(fmtTs(d.submittedAt)) : '<span class="muted">יתמלא אוטומטית בשליחה לאישור</span>'}</span></div>
       <div class="lbl">תואם מול לוח אירועים (דינה):</div><div class="val">${ynHtml("calendarCoordinated", d.calendarCoordinated, edit)} ${inp("calendarDetails", 'placeholder="פירוט האירוע"')}</div>
       <div class="lbl">אירועים נושקים / מקבילים:</div><div class="val">${ynHtml("parallelEvents", d.parallelEvents, edit)} ${inp("parallelDetails", 'placeholder="פירוט האירוע"')}</div>
@@ -822,7 +963,7 @@ const HISTORY_TEXT = {
   created: "פתח/ה את הטופס", cloned: "פתח/ה את הטופס כשכפול של אירוע קודם",
   submitted: "שלח/ה לאישור", resubmitted: "תיקן/ה ושלח/ה מחדש",
   approved: "אישר/ה וחתם/ה", returned: "החזיר/ה לתיקון", invite: "שלח/ה זימון ליומן",
-  invite_failed: "אישר/ה — שליחת הזימון נכשלה", cancelled: "ביטל/ה את האירוע",
+  invite_failed: "אישר/ה — שליחת הזימון נכשלה", cancelled: "ביטל/ה את האירוע", summary: "כתב/ה סיכום אחרי האירוע",
 };
 
 function historyHtml(ev) {
@@ -881,6 +1022,7 @@ function renderEditor(focusSel) {
     body = `<div class="card">
       <div class="wiz-h">שלב 1 — פרטי האירוע</div>
       <div class="small muted" style="margin-bottom:12px">שדות עם * הם חובה.</div>
+      ${lessonsHtml(d.name)}
       ${headerHtml(d, true, editing.id)}
     </div>`;
   } else if (step.key === "sec") {
@@ -904,6 +1046,8 @@ function renderEditor(focusSel) {
     body = `<div class="card">
       <div class="wiz-h">סיכום — בדיקה אחרונה לפני שליחה</div>
       <div class="small muted" style="margin-bottom:12px">כך ייראה הטופס אצל המאשרים. לתיקון — לוחצים על השלב בפס למעלה.</div>
+      ${checksHtml(eventChecks(d, editing.id))}
+      ${lessonsHtml(d.name)}
       ${headerHtml(d, false, editing.id)}
       ${sectionsHtml(d, false, pseudo) || `<div class="empty">לא נכלל אף חלק בטופס</div>`}
       <div class="actions" style="margin-top:16px">
@@ -1107,6 +1251,7 @@ function renderView(ev) {
     ${ev.invite && ev.invite.sentAt ? `<div class="card no-print"><div class="card-title">📅 זימון נשלח</div>
       <div class="small" style="margin-top:6px">${esc(fmtTs(ev.invite.sentAt))} · ${ev.invite.recipients.length} נמענים: ${ev.invite.recipients.map(r => esc(r.name)).join(", ")}</div></div>` : ""}
     <div class="card">${sectionsHtml(ev, false, ev)}</div>
+    ${summaryCardHtml(ev)}
     ${historyHtml(ev)}`;
 
   window.scrollTo(0, y);
@@ -1127,41 +1272,83 @@ function defaultRecipients(ev) {
   return out;
 }
 
+// ── זימון לפי המוסכמות של טכנודע (מתוך technoda-events-kb, סעיפים 2–3) ──
+// כותרת: [שם] - [משתתפים] - [מתחמים] - באחריות [שם פרטי] - משימות בגוף הזימון
+// גוף: "שלום לכולם", שורת פרטים, משימות לפי שם בסדר הקבוע, שורת בטיחות, סגירה.
+const INVITE_OWNER_ORDER = ["לירון", "דינה", "מידן", "עזריאל", "קרן", "שניר"];
+const HE_WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+const firstName = n => String(n || "").trim().split(/\s+/)[0];
+const shortDate = iso => { const [y, m, d] = iso.split("-"); return `${+d}.${+m}.${y.slice(2)}`; };
+const weekdayOf = iso => HE_WEEKDAYS[new Date(iso + "T12:00:00Z").getUTCDay()];
+
+function buildInviteTitle(ev) {
+  const parts = [ev.name];
+  if (ev.participants) parts.push(`${ev.participants} משתתפים`);
+  if (ev.location) parts.push(ev.location);
+  const resp = firstName(ev.eventManager || ev.coordinator);
+  if (resp) parts.push(`באחריות ${resp}`);
+  if (allRows(ev).some(x => x.row.item)) parts.push("משימות בגוף הזימון");
+  return parts.filter(Boolean).join(" - ");
+}
+
 function buildInviteDescription(ev) {
   const L = [];
-  L.push(ev.name);
-  if (ev.goals) L.push(ev.goals);
+  const multi = ev.dateEnd && ev.dateEnd !== ev.dateStart;
+  const when = multi
+    ? `בתאריכים ${shortDate(ev.dateStart)}–${shortDate(ev.dateEnd)}`
+    : `ביום ${weekdayOf(ev.dateStart)} ב-${shortDate(ev.dateStart)}`;
+  const hours = ev.timeStart ? ` בין השעות ${ev.timeStart}${ev.timeEnd ? "-" + ev.timeEnd : ""}` : "";
+
+  L.push("שלום לכולם,");
   L.push("");
-  L.push("מועד: " + formatEventWhen(ev));
-  if (ev.location) L.push("מיקום: " + ev.location);
-  if (ev.coordinator) L.push("רכז/ת אחראי/ת: " + ev.coordinator);
-  if (ev.participants) L.push("משתתפים צפויים: " + ev.participants);
-  // חלוקת האחריות לפי אנשים: כל אחד/ת והמשימות שלו/ה. משימה של כמה אנשים מופיעה אצל כל אחד מהם.
+  L.push(`לקראת ${ev.name}, שיתקיים ${when}${hours}, אשמח לעזרתכם בהיערכות.`);
+  if (ev.goals) L.push(ev.goals);
+  if (ev.participants) L.push(`בפעילות ישתתפו כ-${ev.participants} משתתפים.`);
+  if (ev.location) L.push(`מיקום: ${ev.location}`);
+  if (ev.eventManager) L.push(`מנהל/ת האירוע בשטח: ${ev.eventManager}${ev.eventManagerSub ? ` (מחליף/ה: ${ev.eventManagerSub})` : ""}`);
+
+  // משימות לפי שם. משימה של כמה אנשים מופיעה אצל כל אחד מהם.
   const byOwner = new Map();
   const add = (name, line) => { if (!byOwner.has(name)) byOwner.set(name, []); byOwner.get(name).push(line); };
   allRows(ev).forEach(({ group, row }) => {
     if (!row.item) return;
-    const line = `  • ${group.name ? group.name + " — " : ""}${row.item}` +
-      (row.qty ? ` · כמות: ${row.qty}` : "") + (row.location ? ` · מיקום: ${row.location}` : "");
+    const line = `${group.name ? group.name + " — " : ""}${row.item}` +
+      (row.qty ? ` (כמות: ${row.qty})` : "") + (row.location ? ` · ${row.location}` : "");
     if (row.owners.length) row.owners.forEach(o => add(o.name, line));
     else add("", line);
   });
-  if (byOwner.size) {
+  const rank = name => { const i = INVITE_OWNER_ORDER.indexOf(firstName(name)); return i < 0 ? 99 : i; };
+  const names = [...byOwner.keys()].filter(Boolean)
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "he"));
+  if (names.length || byOwner.has("")) {
     L.push("");
-    L.push("חלוקת אחריות:");
-    [...byOwner.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, "he")).forEach(name => {
+    L.push("אשמח לעזרתכם בנושאים הבאים:");
+    names.forEach(name => {
       L.push("");
-      L.push(name + ":");
-      byOwner.get(name).forEach(line => L.push(line));
+      L.push(firstName(name));
+      byOwner.get(name).forEach((line, i) => L.push(`${i + 1}. ${line}`));
     });
     if (byOwner.has("")) {
       L.push("");
-      L.push("ללא אחראי/ת:");
-      byOwner.get("").forEach(line => L.push(line));
+      L.push("עדיין ללא אחראי/ת:");
+      byOwner.get("").forEach((line, i) => L.push(`${i + 1}. ${line}`));
     }
   }
+
   const notes = ev.sections.filter(s => s.enabled && s.note).map(s => `• ${s.title}: ${s.note}`);
-  if (notes.length) { L.push(""); L.push("הערות:"); notes.forEach(n => L.push(n)); }
+  if (notes.length) { L.push(""); L.push("שימו לב:"); notes.forEach(n => L.push(n)); }
+
+  // נוהל: מעל 100 משתתפים — הקב"ט מעביר לקב"ט העירייה, ונדרש מאבטח חמוש
+  if (+ev.participants > 100) {
+    const sec = approversFor(STAGES[0]).map(p => firstName(p.name)).join(" / ") || 'הקב"ט';
+    L.push("");
+    L.push(`בטיחות: אירוע מעל 100 משתתפים — ${sec} מעביר/ה לקב"ט העירייה ומוודא/ת ביצוע ההנחיות. נדרש מאבטח חמוש.`);
+  }
+
+  L.push("");
+  L.push("אשמח לדעת אם יש צורך בתיאום נוסף.");
+  L.push("תודה רבה,");
+  L.push(ev.coordinator || ev.createdByName || "");
   L.push("");
   L.push("לטופס המלא: " + SYSTEM_URL + "#event/" + ev.id);
   return L.join("\n");
@@ -1169,7 +1356,7 @@ function buildInviteDescription(ev) {
 
 function defaultInvite(ev) {
   return {
-    title: ev.name, location: ev.location || "", description: buildInviteDescription(ev),
+    title: buildInviteTitle(ev), location: ev.location || "", description: buildInviteDescription(ev),
     dateStart: ev.dateStart, dateEnd: ev.dateEnd || "", timeStart: ev.timeStart || "", timeEnd: ev.timeEnd || "",
     recipients: defaultRecipients(ev),
   };
@@ -1220,6 +1407,7 @@ function approvalPanelHtml(ev, stage) {
   return `<div class="panel no-print">
     <h3>🖊️ האישור שלך נדרש — ${esc(stage.label)}</h3>
     ${conf.overlap.length || conf.adjacent.length ? conflictsHtml(ev, ev.id) + "<div style='height:12px'></div>" : ""}
+    ${checksHtml(eventChecks(ev, ev.id), "🔎 נקודות לבדיקה לפני אישור")}
     ${sched ? inviteEditorHtml(ev) : ""}
     <div class="field"><label>הערה / סיבת החזרה ${sched ? "(למשל: המועד לא מתאים כי...)" : ""}</label>
       <textarea id="approveNote" placeholder="בהחזרה — חובה לפרט למה"></textarea></div>
@@ -1379,6 +1567,9 @@ function bindPageEvents() {
       }
       case "refresh": viewLock = false; inviteDraft = null; render(true); break;
       case "print": window.print(); break;
+      case "saveSummary": saveSummary(ev); break;
+      case "editSummary": summaryEditing = true; viewLock = true; renderView(ev); break;
+      case "cancelSummary": summaryEditing = false; viewLock = false; render(true); break;
 
       // עריכה — מבנה
       case "goStep": goStep(+t.dataset.n); break;
@@ -1457,6 +1648,8 @@ function bindPageEvents() {
       if (pickedFromList(t) && e.inputType !== "insertText") addRecipient(t);
     } else if (t.dataset.inv && inviteDraft) {
       inviteDraft.data[t.dataset.inv] = t.value;
+      viewLock = true;
+    } else if (t.dataset.sum) {
       viewLock = true;
     } else if (t.id === "approveNote") {
       viewLock = true;

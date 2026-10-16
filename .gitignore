@@ -1,3 +1,7 @@
 *.xlsx
 ~$*
 node_modules/
+# מאגר הידע מהמייל — רגיש, לא עולה לריפו הציבורי
+technoda-events-kb*.md
+knowledge*.md
+*-kb.md

@@ -312,6 +312,17 @@ table.sheet tr.done .item-ro { text-decoration: line-through; text-decoration-co
 .role-tag.scheduler { background: var(--orange-bg); color: var(--orange); }
 tr.inactive td { opacity: .5; }
 
+/* ── "מה שכחתי?" ── */
+.checks { border: 1px solid #f3dcbc; background: #fffaf2; border-radius: 12px; padding: 14px 16px; margin: 0 0 16px; }
+.checks.ok { border-color: #bfe3cf; background: var(--green-bg); color: var(--green); display: flex; gap: 10px; flex-wrap: wrap; }
+.checks-h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.checks ul { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.checks li { position: relative; padding-right: 22px; font-size: 14px; }
+.checks li::before { position: absolute; right: 0; top: 0; }
+.checks li.warn::before { content: "⚠️"; font-size: 13px; }
+.checks li.tip { color: #4a5568; }
+.checks li.tip::before { content: "💡"; font-size: 13px; }
+
 /* ── Wizard ── */
 .wiz-bar { display: flex; gap: 6px; margin: 14px 0 16px; overflow-x: auto; padding-bottom: 4px; }
 .wiz-step {
