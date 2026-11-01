@@ -392,7 +392,7 @@ function aiEventPayload(d, id) {
     title: s.title, note: s.note || undefined,
     rows: s.groups.flatMap(g => g.rows.filter(r => r.item).map(r => ({
       group: g.name, item: r.item, owners: r.owners.map(o => o.name),
-      qty: r.qty || undefined, location: r.location || undefined,
+      qty: r.qty || undefined,
     }))),
   }));
   return out;
@@ -481,12 +481,12 @@ function applyAiFill(d, r) {
 }
 
 // ── 2. ניסוח הזימון (שלב סמנכ"ל התפעול) ──
-function aiInviteToolsHtml() {
+function aiInviteToolsHtml(act = "aiInvite") {
   return `<span class="ai-inline">
     <select id="aiStyle" class="inp" title="סגנון הניסוח">
       ${[["regular", "רגיל"], ["short", "קצר"], ["detailed", "מפורט"]].map(([v, l]) => `<option value="${v}" ${v === aiStyleChoice ? "selected" : ""}>${l}</option>`).join("")}
     </select>
-    <button class="btn btn-sm" data-act="aiInvite">✨ נסח לי</button>
+    <button class="btn btn-sm" data-act="${act}">✨ נסח לי</button>
   </span>`;
 }
 
@@ -949,7 +949,7 @@ function homeTasks(tasks) {
           return `<label class="task ${d ? "done" : ""}">
             <input type="checkbox" class="done-box" data-act="done" data-id="${esc(ev.id)}" data-row="${esc(row.id)}" ${d ? "checked" : ""}>
             <div style="flex:1"><div class="t-item">${esc(row.item)}</div>
-              <div class="t-cat">${esc(sec.title)} · ${esc(group.name)}${row.qty ? " · כמות: " + esc(row.qty) : ""}${row.location ? " · " + esc(row.location) : ""}</div></div>
+              <div class="t-cat">${esc(sec.title)} · ${esc(group.name)}${row.qty ? " · כמות: " + esc(row.qty) : ""}</div></div>
             ${d ? `<span class="small muted">${esc(d.by)} · ${esc(fmtTs(d.at))}</span>` : ""}
           </label>`;
         }).join("") : `<div class="small muted">כל המשימות שלך באירוע הזה בוצעו ✓</div>`}
@@ -1079,7 +1079,7 @@ function sectionsHtml(d, edit, ev, opts = {}) {
            <button class="btn-icon" data-act="delGroup" data-si="${si}" data-gi="${gi}" title="מחיקת הקטגוריה">🗑</button></div>`
         : esc(g.name)}</td>`;
       if (!rows.length) {
-        return `<tr>${catCell(1)}<td colspan="5" class="muted small">אין שורות בקטגוריה — "+ שורה" כדי להוסיף</td></tr>`;
+        return `<tr>${catCell(1)}<td colspan="4" class="muted small">אין שורות בקטגוריה — "+ שורה" כדי להוסיף</td></tr>`;
       }
       return rows.map((r, ri) => {
         const rp = `${gp}.rows.${g.rows.indexOf(r)}`;
@@ -1092,7 +1092,6 @@ function sectionsHtml(d, edit, ev, opts = {}) {
           <td>${edit ? `<input data-p="${rp}.item" value="${esc(r.item)}" placeholder="פריט / משימה">` : `<span class="item-ro">${esc(r.item)}</span>`}</td>
           <td>${ownersHtml(r.owners, rp, edit)}</td>
           <td class="w-qty">${edit ? `<input data-p="${rp}.qty" value="${esc(r.qty)}" placeholder="—">` : esc(r.qty)}</td>
-          <td class="w-loc">${edit ? `<input data-p="${rp}.location" value="${esc(r.location)}" placeholder="—">` : esc(r.location)}</td>
           ${doneCell}
           ${edit ? `<td class="w-x"><button class="btn-icon" data-act="delRow" data-si="${si}" data-gi="${gi}" data-ri="${g.rows.indexOf(r)}" title="מחיקת השורה">✕</button></td>` : ""}
         </tr>`;
@@ -1103,8 +1102,8 @@ function sectionsHtml(d, edit, ev, opts = {}) {
       <div class="sec-head">${head}</div>
       <div class="sec-body">
         <div class="sheet-wrap"><table class="sheet">
-          <thead><tr><th>קטגוריה</th><th>פריט</th><th>שם האחראי</th><th class="w-qty">כמות דרושה</th><th class="w-loc">מיקום</th>${showDone ? '<th class="w-done">בוצע</th>' : ""}${edit ? '<th class="w-x"></th>' : ""}</tr></thead>
-          <tbody>${rowsHtml || `<tr><td colspan="6" class="muted small" style="padding:14px">אין שורות בחלק הזה</td></tr>`}</tbody>
+          <thead><tr><th>קטגוריה</th><th>פריט</th><th>שם האחראי</th><th class="w-qty">כמות דרושה</th>${showDone ? '<th class="w-done">בוצע</th>' : ""}${edit ? '<th class="w-x"></th>' : ""}</tr></thead>
+          <tbody>${rowsHtml || `<tr><td colspan="5" class="muted small" style="padding:14px">אין שורות בחלק הזה</td></tr>`}</tbody>
         </table></div>
         ${edit ? `<div class="sec-foot"><button class="btn btn-light btn-sm" data-act="addGroup" data-si="${si}">+ קטגוריה חדשה</button></div>` : ""}
       </div>
@@ -1210,6 +1209,7 @@ function renderEditor(focusSel) {
         <button class="btn btn-light" data-act="addSec">+ הוספת חלק נוסף לטופס</button>
       </div>
     </div>
+    ${inviteDraftCardHtml(d)}
     ${ev && Object.keys(ev.signatures || {}).length ? `<div class="card"><div class="card-title" style="margin-bottom:12px">חתימות</div>${sigsHtml(ev)}</div>` : ""}`;
   }
 
@@ -1311,6 +1311,13 @@ async function saveEvent(submit) {
   const prev = isNew ? null : S.events[id];
   const now = Date.now();
   const patch = { updatedAt: now, sections: clone(d.sections) };
+  // נוסח הזימון שמנהל/ת האירוע הכין/ה. null מוחק (חזרה לנוסח שנבנה מהטופס)
+  patch.inviteText = d.inviteText ? {
+    title: d.inviteText.title,
+    // באירוע חדש הקישור לטופס נכתב בלי מזהה — משלימים אותו עכשיו
+    description: d.inviteText.description.replace(/#event\/(?![\w-])/g, "#event/" + id),
+    by: S.me.name, at: now,
+  } : null;
   FORM_FIELDS.forEach(f => (patch[f] = d[f] == null ? "" : d[f]));
   if (patch.dateEnd === patch.dateStart) patch.dateEnd = "";
 
@@ -1469,7 +1476,7 @@ function buildInviteDescription(ev) {
   allRows(ev).forEach(({ group, row }) => {
     if (!row.item) return;
     const line = `${group.name ? group.name + " — " : ""}${row.item}` +
-      (row.qty ? ` (כמות: ${row.qty})` : "") + (row.location ? ` · ${row.location}` : "");
+      (row.qty ? ` (כמות: ${row.qty})` : "");
     if (row.owners.length) row.owners.forEach(o => add(o.name, line));
     else add("", line);
   });
@@ -1510,12 +1517,71 @@ function buildInviteDescription(ev) {
   return L.join("\n");
 }
 
-function defaultInvite(ev) {
+// usePrepared — לפתוח מהנוסח שמנהל/ת האירוע הכין/ה בשלב הסיכום (אם יש), ולא מהטופס.
+// התאריכים, המיקום והנמענים תמיד מהטופס העדכני.
+function defaultInvite(ev, usePrepared) {
+  const prep = usePrepared && ev.inviteText;
   return {
-    title: buildInviteTitle(ev), location: ev.location || "", description: buildInviteDescription(ev),
+    title: prep ? prep.title : buildInviteTitle(ev), location: ev.location || "",
+    description: prep ? prep.description : buildInviteDescription(ev),
     dateStart: ev.dateStart, dateEnd: ev.dateEnd || "", timeStart: ev.timeStart || "", timeEnd: ev.timeEnd || "",
     recipients: defaultRecipients(ev),
   };
+}
+
+// ── נוסח הזימון בשלב הסיכום של האשף: מנהל/ת האירוע רואה, מתקן/ת, או מבקש/ת מהעוזר ──
+// כל עוד לא נגעו בנוסח הוא נבנה מהטופס ומתעדכן איתו. אחרי עריכה הוא נשמר עם האירוע
+// (inviteText) ומגיע לסמנכ"ל התפעול כנקודת התחלה.
+function draftEventForInvite(d) {
+  return {
+    ...d, id: editing.id || "",
+    createdByName: d.createdByName || S.me.name,
+    createdByWorkEmail: d.createdByWorkEmail || S.me.workEmail || "",
+    createdBy: d.createdBy || S.me.authEmail,
+  };
+}
+
+function inviteDraftCardHtml(d) {
+  const ev = draftEventForInvite(d);
+  const t = d.inviteText || { title: buildInviteTitle(ev), description: buildInviteDescription(ev) };
+  const rec = defaultRecipients(ev);
+  const sched = approversFor(STAGES[STAGES.length - 1]).map(p => firstName(p.name)).join(" / ") || 'סמנכ"ל התפעול';
+  return `<div class="card no-print" id="inviteDraftCard">
+    <div class="card-header">
+      <span class="card-title">📅 הזימון שיישלח בסוף התהליך</span>
+      <div class="actions">
+        ${aiInviteToolsHtml("aiInviteDraft")}
+        ${d.inviteText ? `<button class="btn btn-light btn-sm" data-act="resetInviteDraft" title="בנייה מחדש מתוך הטופס">↺ מחדש מהטופס</button>` : ""}
+      </div>
+    </div>
+    <div class="small muted" style="margin-bottom:12px">זה הנוסח ש${esc(sched)} תקבל מוכן לשליחה. אפשר לתקן אותו כאן או לבקש מהעוזר, ו${esc(sched)} עדיין תוכל לערוך לפני השליחה.
+      ${d.inviteText ? "<strong>הנוסח נערך</strong> — אם תשנו את הטופס, לחצו \"מחדש מהטופס\" כדי לעדכן אותו." : "כל עוד לא ערכתם, הנוסח נבנה מהטופס ומתעדכן איתו."}</div>
+    <div class="panel" style="box-shadow:none;border:0;padding:0;margin:0">
+      <div class="field"><label>נושא</label><input type="text" data-ivt="title" value="${esc(t.title)}"></div>
+      <div class="field"><label>תוכן הזימון</label><textarea data-ivt="description" style="min-height:260px;font-size:13px">${esc(t.description)}</textarea></div>
+      <div class="field"><label>נמענים (${rec.length})</label>
+        <div class="chips">${rec.map(r => `<span class="chip" title="${esc(r.email)}">${esc(r.name)}</span>`).join("") || '<span class="muted small">—</span>'}</div>
+        <div class="small muted" style="margin-top:4px">את הנמענים קובעת ${esc(sched)} בשלב שלה. כברירת מחדל: מי שפותח את האירוע, כל האחראים בטופס, והמוזמנים הקבועים.</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doAiInviteDraft(btn) {
+  const d = editing.data;
+  const style = aiStyleChoice = $("aiStyle").value;
+  const ev = draftEventForInvite(d);
+  const cur = d.inviteText || { title: buildInviteTitle(ev), description: buildInviteDescription(ev) };
+  await aiBusy(btn, "מנסח...", async () => {
+    const r = await callAI("invite", {
+      style, event: aiEventPayload(d, editing.id),
+      current: { title: cur.title, body: cur.description },
+    });
+    d.inviteText = { title: r.title || cur.title, description: r.body || cur.description };
+    markDirty();
+    renderEditor();
+    toast("העוזר ניסח את הזימון — אפשר לתקן, ובסוף לשמור או לשלוח", "ok");
+  });
 }
 
 let inviteDraft = null;   // { evId, data } — הזימון שדינה עורכת כרגע
@@ -1523,7 +1589,7 @@ let inviteDraft = null;   // { evId, data } — הזימון שדינה עורכ
 function currentInvite(ev) {
   if (!inviteDraft || inviteDraft.evId !== ev.id) {
     const saved = ev.invite && !ev.invite.sentAt ? clone(ev.invite) : null;
-    inviteDraft = { evId: ev.id, data: saved || defaultInvite(ev) };
+    inviteDraft = { evId: ev.id, data: saved || defaultInvite(ev, true) };
   }
   return inviteDraft.data;
 }
@@ -1532,7 +1598,7 @@ function inviteEditorHtml(ev) {
   const inv = currentInvite(ev);
   return `<div style="background:var(--gray-light);border-radius:8px;padding:14px;margin-bottom:14px">
     <div class="actions" style="justify-content:space-between;margin-bottom:10px">
-      <strong>📅 הזימון שיישלח ל-Outlook / יומן Google</strong>
+      <strong>📅 הזימון שיישלח ל-Outlook / יומן Google${ev.inviteText && !ev.invite ? ` <span class="small muted" style="font-weight:400">· הנוסח הוכן ע"י ${esc(ev.inviteText.by)}</span>` : ""}</strong>
       <div class="actions">
         ${aiInviteToolsHtml()}
         <button class="btn btn-light btn-sm" data-act="saveInvite">💾 שמירת טיוטת זימון</button>
@@ -1727,6 +1793,8 @@ function bindPageEvents() {
       case "print": window.print(); break;
       case "aiFill": doAiFill(t); break;
       case "aiInvite": viewLock = true; doAiInvite(ev, t); break;
+      case "aiInviteDraft": doAiInviteDraft(t); break;
+      case "resetInviteDraft": delete d.inviteText; markDirty(); renderEditor(); break;
       case "aiReview": doAiReview(t.dataset.key, t); break;
       case "saveSummary": saveSummary(ev); break;
       case "editSummary": summaryEditing = true; viewLock = true; renderView(ev); break;
@@ -1810,6 +1878,13 @@ function bindPageEvents() {
     } else if (t.dataset.inv && inviteDraft) {
       inviteDraft.data[t.dataset.inv] = t.value;
       viewLock = true;
+    } else if (t.dataset.ivt && editing) {
+      const box = $("inviteDraftCard");
+      editing.data.inviteText = {
+        title: box.querySelector('[data-ivt="title"]').value,
+        description: box.querySelector('[data-ivt="description"]').value,
+      };
+      markDirty();
     } else if (t.id === "aiDesc" && editing) {
       editing.aiDesc = t.value;
     } else if (t.dataset.sum) {
