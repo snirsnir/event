@@ -53,7 +53,9 @@ const ROLE_LABELS = {
 };
 
 const STATUS_LABELS = {
-  draft:             { text: "טיוטה",                 cls: "st-draft" },
+  request:           { text: "בקשה — ממתינה לאישור",   cls: "st-request" },
+  request_returned:  { text: "בקשה הוחזרה לתיקון",     cls: "st-returned" },
+  draft:             { text: "טופס בהכנה",             cls: "st-draft" },
   pending_security:  { text: 'ממתין לקב"ט',           cls: "st-pending" },
   pending_deputy:    { text: 'ממתין למשנה למנכ"ל',     cls: "st-pending" },
   pending_scheduler: { text: 'ממתין לסמנכ"ל תפעול',   cls: "st-pending" },

@@ -101,20 +101,25 @@ function staffMail(p) { return p ? (p.workEmail || p.authEmail) : ""; }
 function approversFor(stage) { return activeStaff().filter(p => p.roles && p.roles[stage.role]); }
 function isAdmin() { return !!(S.me && S.me.roles && S.me.roles.admin); }
 function hasRole(role) { return !!(S.me && S.me.roles && S.me.roles[role]); }
-function isCreator(ev) { return S.me && ev.createdByKey === S.me.key; }
+function ownerKey(ev) { return ev.managerKey || ev.createdByKey; }
+function isOwner(ev) { return !!S.me && ownerKey(ev) === S.me.key; }
+function isRequester(ev) { return !!S.me && ev.createdByKey === S.me.key; }
+function isPartner(ev) { return !!(S.me && ev.partners && ev.partners[S.me.key]); }
+// "שלי" לצורך הרשאות — מי שמנהל/ת את האירוע
+function isCreator(ev) { return isOwner(ev); }
 function currentStage(ev) { return STAGES.find(s => s.status === ev.status) || null; }
 
 function canEdit(ev) {
-  return ["draft", "returned"].includes(ev.status) && (isCreator(ev) || isAdmin());
+  return ["draft", "returned"].includes(ev.status) && (isOwner(ev) || isPartner(ev) || isAdmin());
 }
 function canApprove(ev) {
   const st = currentStage(ev);
   return !!st && hasRole(st.role);
 }
-function isActiveEvent(ev) { return !["draft", "cancelled"].includes(ev.status); }
+function isActiveEvent(ev) { return !["draft", "cancelled", "request", "request_returned"].includes(ev.status); }
 // מחיקה לצמיתות — רק אירוע שבוטל או טיוטה, ורק היוצר/ת או אדמין
 function canDelete(ev) {
-  return ["cancelled", "draft"].includes(ev.status) && (isCreator(ev) || isAdmin());
+  return ["cancelled", "draft", "request_returned"].includes(ev.status) && (isOwner(ev) || isAdmin());
 }
 
 async function deleteEvent(ev) {
@@ -157,7 +162,7 @@ function newEventData() {
     status: "draft",
     // התבנית מעמדת הניהול (settings/template), ואם אין — התבנית המקורית מהאקסל
     sections: currentTemplate().map(sec => ({
-      id: rid(), title: sec.title, note: sec.note || "", enabled: true,
+      id: rid(), title: sec.title, note: sec.note || "", description: sec.description || "", enabled: true,
       groups: sec.groups.map(g => ({
         id: rid(), name: g.name,
         rows: g.rows.map(r => ({
@@ -219,7 +224,7 @@ function findConflicts(d, selfId) {
   const a1 = dayNum(d.dateStart), a2 = dayNum(d.dateEnd || d.dateStart);
   const overlap = [], adjacent = [];
   Object.values(S.events).forEach(ev => {
-    if (ev.id === selfId || !isActiveEvent(ev) || !ev.dateStart) return;
+    if (ev.id === selfId || !holdsDate(ev)) return;
     const b1 = dayNum(ev.dateStart), b2 = dayNum(ev.dateEnd || ev.dateStart);
     if (a1 <= b2 && b1 <= a2) overlap.push(ev);
     else if (b1 - a2 === 1 || a1 - b2 === 1) adjacent.push(ev);
@@ -279,7 +284,10 @@ function eventChecks(d, selfId) {
   if (n > 100) {
     if (!has(/בטיחות/)) warn("אירוע מעל 100 משתתפים בלי משימות בטיחות בטופס (תיק בטיחות, משקיף).");
     if (!has(/שמיר|אבטח|מאבטח|שומר/)) warn("מעל 100 משתתפים נדרש מאבטח חמוש — אין שורת שמירה/אבטחה. לשריין מוקדם, יש מחסור.");
-    tip('הזימון יועבר לקב"ט העירייה — לצרף את ההנחיות שלו לטופס כשיגיעו.');
+    if (!hasKabatFile(d)) {
+      if (["draft", "returned"].includes(d.status) || !d.status) tip('הקב"ט יצרף את הנחיות קב"ט העירייה בשלב שלו.');
+      else warn('לא צורף קובץ הנחיות קב"ט העירייה.');
+    }
   }
   if (n >= 500) tip("אירוע גדול: לשקול אמבולנס — קשה להשיג פחות משבועיים לפני.");
   if (d.timeEnd && d.timeEnd >= "18:00") tip("אירוע ערב: איש אחזקה ומנקה שנשארים, והארכת שעות השומר.");
@@ -708,9 +716,9 @@ function render(force, fromData) {
   if (r.name === "event") {
     if (r.arg === "new") {
       if (!editing || editing.id) editing = { id: null, data: newEventData(), dirty: false };
-      if (mounted === "edit:new" && !force) return;
-      mounted = "edit:new";
-      renderEditor();
+      if (mounted === "req:new" && !force) return;
+      mounted = "req:new";
+      renderRequestForm();
       return;
     }
     const ev = S.events[r.arg];
@@ -719,9 +727,32 @@ function render(force, fromData) {
       page.innerHTML = `<div class="card empty">האירוע לא נמצא. <a href="#home">חזרה לדף הבית</a></div>`;
       return;
     }
+    if (isRequest(ev)) {
+      if (canEditRequest(ev)) {
+        if (!editing || editing.id !== ev.id) editing = { id: ev.id, data: clone(ev), dirty: false };
+        if (mounted === "req:" + ev.id && !force) return;
+        mounted = "req:" + ev.id;
+        renderRequestForm();
+        return;
+      }
+      editing = null;
+      if (mounted === "view:" + ev.id && viewLock && !force) { $("staleBanner") && $("staleBanner").classList.remove("hidden"); return; }
+      mounted = "view:" + ev.id;
+      renderRequestView(ev);
+      return;
+    }
     if (canEdit(ev)) {
-      if (!editing || editing.id !== ev.id) editing = { id: ev.id, data: clone(ev), dirty: false };
-      if (mounted === "edit:" + ev.id && !force) return;
+      if (!editing || editing.id !== ev.id) editing = { id: ev.id, data: clone(ev), dirty: false, loadedAt: ev.updatedAt || 0 };
+      if (mounted === "edit:" + ev.id && !force) {
+        // הטופס פתוח לעריכה: לא בונים אותו מחדש, רק מעדכנים את פס השותפים,
+        // ומתריעים אם מישהו אחר שמר שינויים בינתיים
+        refreshPeopleBar(ev);
+        if ((ev.updatedAt || 0) > (editing.loadedAt || 0) && ev.updatedBy && ev.updatedBy !== S.me.name && $("editStale")) {
+          $("editStale").innerHTML = `✏️ ${esc(ev.updatedBy)} שמר/ה שינויים בטופס. <button class="btn btn-light btn-sm" data-act="reloadEditing">טעינת הגרסה העדכנית</button> <span class="small muted">(שינויים שלך שלא נשמרו יאבדו)</span>`;
+          $("editStale").classList.remove("hidden");
+        }
+        return;
+      }
       mounted = "edit:" + ev.id;
       renderEditor();
       return;
@@ -745,7 +776,7 @@ function render(force, fromData) {
 // ════════════════════════════════════════════════════════════
 
 function myApprovalQueue() {
-  return Object.values(S.events).filter(canApprove).sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  return Object.values(S.events).filter(ev => canApprove(ev) || canDecideRequest(ev)).sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
 }
 
 function myTasks() {
@@ -786,7 +817,7 @@ function renderHome(page) {
         <div style="font-size:20px;font-weight:600;color:var(--ink)">שלום ${esc(S.me.name)} 👋</div>
         <div class="small muted" style="margin-top:2px">${roleTags(S.me) || "עובד/ת"}</div>
       </div>
-      <a class="btn" href="#event/new" style="font-size:15px;padding:11px 20px">➕ פתיחת אירוע חדש</a>
+      <a class="btn" href="#event/new" style="font-size:15px;padding:11px 20px">📝 בקשה לאירוע חדש</a>
     </div>
     <div class="tabs">
       ${tabs.map(t => `<button class="tab ${t.id === tab ? "active" : ""}" data-act="tab" data-tab="${t.id}">${t.label}${t.badge ? ` <span class="badge">${t.badge}</span>` : ""}</button>`).join("")}
@@ -810,6 +841,8 @@ function isoFromDay(n) { return new Date(n * 86400000).toISOString().slice(0, 10
 
 // צבע ותיאור קצר לפי שלב: ירוק = מאושר לגמרי, כתום = בתהליך (ובאיזה שלב), אדום = הוחזר
 function calStatus(ev) {
+  if (ev.status === "request") return { cls: "cal-req", text: "בקשה ממתינה" };
+  if (ev.status === "draft") return { cls: "cal-req", text: "בהכנה — " + firstName(ownerName(ev)) };
   if (ev.status === "approved") return { cls: "cal-ok", text: "מאושר" };
   if (ev.status === "returned") return { cls: "cal-ret", text: "הוחזר לתיקון" };
   const st = currentStage(ev);
@@ -827,7 +860,7 @@ function calendarHtml() {
   const last = first + daysInMonth - 1;
 
   const evs = Object.values(S.events)
-    .filter(ev => ev.dateStart && !["draft", "cancelled"].includes(ev.status))
+    .filter(holdsDate)
     .map(ev => ({ ev, a: dayNum(ev.dateStart), b: dayNum(ev.dateEnd || ev.dateStart) }))
     .sort((p, q) => p.a - q.a || (p.ev.name || "").localeCompare(q.ev.name || "", "he"));
   const inMonth = evs.filter(x => x.a <= last && x.b >= first);
@@ -848,7 +881,7 @@ function calendarHtml() {
     const dayEvs = evs.filter(x => x.a <= n && x.b >= n);
     cells += `<div class="cal-cell ${out ? "out" : ""} ${iso === todayIso ? "today" : ""} ${i % 7 === 6 ? "sat" : ""} ${hol.some(h => h.closed) ? "closed" : ""}">
       <div class="cal-top"><span class="cal-day">${+iso.slice(8)}</span>${!out && iso >= todayIso
-        ? `<button class="cal-add" data-act="calNew" data-date="${iso}" title="אירוע חדש ב-${fmtDate(iso)}">+</button>` : ""}</div>
+        ? `<button class="cal-add" data-act="calNew" data-date="${iso}" title="בקשה לאירוע ב-${fmtDate(iso)}">+</button>` : ""}</div>
       ${hol.map(h => `<div class="cal-hol">${esc(h.name)}</div>`).join("")}
       ${out ? "" : dayEvs.map(chip).join("")}
     </div>`;
@@ -888,6 +921,7 @@ function calendarHtml() {
       <span><i class="cal-ok"></i>מאושר — זימון נשלח</span>
       <span><i class="cal-wait"></i>בתהליך אישור (כתוב באיזה שלב)</span>
       <span><i class="cal-ret"></i>הוחזר לתיקון</span>
+      <span><i class="cal-req"></i>בקשה / בהכנה</span>
       <span class="small muted">${inMonth.length} אירועים החודש</span>
     </div>
     <div class="cal-grid">
@@ -918,10 +952,15 @@ function eventsTable(list, opts = {}) {
 }
 
 function homeMine() {
-  const list = Object.values(S.events).filter(isCreator).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const list = Object.values(S.events).filter(ev => isOwner(ev) || isPartner(ev) || isRequester(ev))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const waiting = awaitingSummary();
   const banner = waiting.length ? `<div class="banner"><span>📝 ${waiting.length === 1 ? "אירוע אחד הסתיים ומחכה" : waiting.length + " אירועים הסתיימו ומחכים"} לסיכום קצר: ${waiting.map(ev => `<a href="#event/${esc(ev.id)}">${esc(ev.name)}</a>`).join(", ")}</span></div>` : "";
-  return banner + eventsTable(list, { empty: 'עדיין לא פתחת אירועים. לחצו על "פתיחת אירוע חדש" כדי להתחיל.' });
+  return banner + eventsTable(list, {
+    empty: 'עדיין אין לך אירועים. לחצו על "בקשה לאירוע חדש" כדי להתחיל.',
+    extraHead: "<th>התפקיד שלי</th>",
+    extraCell: ev => `<td class="small">${isOwner(ev) ? "מנהל/ת" : isPartner(ev) ? "שותף/ה" : "מבקש/ת"}</td>`,
+  });
 }
 
 function homeApprovals(queue) {
@@ -963,6 +1002,7 @@ function homeBoard() {
   const all = Object.values(S.events).filter(ev => ev.status !== "draft" || isCreator(ev));
   const groups = {
     active:   { label: "כל הפעילים", cls: "", test: ev => !["cancelled", "draft"].includes(ev.status) },
+    requests: { label: "בקשות ובהכנה", cls: "", test: ev => ev.status === "request" || (ev.status === "draft" && !!ev.managerKey) },
     pending:  { label: "בתהליך אישור", cls: "pending", test: ev => !!currentStage(ev) },
     returned: { label: "הוחזרו לתיקון", cls: "returned", test: ev => ev.status === "returned" },
     approved: { label: "מאושרים", cls: "approved", test: ev => ev.status === "approved" },
@@ -982,7 +1022,7 @@ function homeBoard() {
     ${eventsTable(list, {
       empty: "אין אירועים בקטגוריה הזו",
       extraHead: "<th>שלב נוכחי</th>",
-      extraCell: ev => { const st = currentStage(ev); return `<td class="small">${st ? esc(st.label) : "—"}</td>`; },
+      extraCell: ev => { const st = currentStage(ev); return `<td class="small">${st ? esc(st.label) : ev.status === "request" ? 'סמנכ"ל תפעול — בקשה' : ev.status === "draft" && ev.managerKey ? "בהכנה — " + esc(ownerName(ev)) : "—"}</td>`; },
     })}`;
 }
 
@@ -1066,7 +1106,7 @@ function sectionsHtml(d, edit, ev, opts = {}) {
          <input class="sec-note" data-p="${sp}.note" value="${esc(sec.note)}" placeholder="הערה לחלק (אופציונלי)">
          ${opts.only == null ? `<label class="switch" title="חלק שלא כלול לא יופיע בטופס, במשימות ובזימון"><input type="checkbox" data-act="toggleSec" data-si="${si}" ${sec.enabled ? "checked" : ""}> כלול בטופס</label>` : ""}
          <button class="btn-icon" data-act="delSec" data-si="${si}" title="מחיקת החלק">🗑</button>`
-      : `<span class="sec-title">${esc(sec.title)}</span>${sec.note ? `<span class="sec-note-ro">${esc(sec.note)}</span>` : ""}`;
+      : `<span class="sec-title">${esc(sec.title)}</span><span class="sec-sum">${esc(sectionSummary(sec))}</span>${sec.note ? `<span class="sec-note-ro">${esc(sec.note)}</span>` : ""}`;
 
     const showDone = !edit && isActiveEvent(ev);
     const rowsHtml = sec.groups.map((g, gi) => {
@@ -1117,6 +1157,10 @@ const HISTORY_TEXT = {
   submitted: "שלח/ה לאישור", resubmitted: "תיקן/ה ושלח/ה מחדש",
   approved: "אישר/ה וחתם/ה", returned: "החזיר/ה לתיקון", invite: "שלח/ה זימון ליומן",
   invite_failed: "אישר/ה — שליחת הזימון נכשלה", cancelled: "ביטל/ה את האירוע", summary: "כתב/ה סיכום אחרי האירוע",
+  requested: "הגיש/ה בקשה לאירוע", re_requested: "תיקן/ה ושלח/ה את הבקשה מחדש",
+  request_approved: "אישר/ה את הבקשה", request_returned: "החזיר/ה את הבקשה למבקש/ת",
+  shared: "שיתף/ה את הטופס עם", unshared: "הסיר/ה מהשיתוף את",
+  partner_done: "סיים/ה ושלח/ה לבדיקת מנהל/ת האירוע", file: "צירף/ה קובץ",
 };
 
 function historyHtml(ev) {
@@ -1141,7 +1185,7 @@ function histEntry(action, extra = {}) {
 function wizardSteps(d) {
   return [
     { key: "details", label: "פרטי האירוע" },
-    ...d.sections.map((s, si) => ({ key: "sec", si, label: s.title || "חלק " + (si + 1), off: !s.enabled })),
+    ...d.sections.map((s, si) => ({ key: "sec", si, label: s.title || "חלק " + (si + 1), sub: sectionSummary(s), off: !s.enabled })),
     { key: "summary", label: "סיכום ושליחה" },
   ];
 }
@@ -1183,6 +1227,7 @@ function renderEditor(focusSel) {
     const sec = d.sections[step.si];
     body = `<div class="card">
       <div class="wiz-h">שלב ${editing.step + 1} — ${esc(sec.title)}</div>
+      ${sectionSummary(sec) ? `<div class="muted" style="margin-bottom:4px">${esc(sectionSummary(sec))}</div>` : ""}
       <div class="wiz-q ${sec.enabled ? "" : "off"}">
         <span>האם ${esc(sec.title)} רלוונטי לאירוע?</span>
         <div class="actions">
@@ -1191,7 +1236,7 @@ function renderEditor(focusSel) {
         </div>
       </div>
       ${sec.enabled
-        ? `<div class="small muted" style="margin:10px 0 0">אפשר לערוך כל שורה, לשנות אחראים, להוסיף שורות וקטגוריות. "כמות דרושה" ו"מיקום" — רק אם רלוונטי.</div>
+        ? `<div class="small muted" style="margin:10px 0 0">אפשר לערוך כל שורה, לשנות אחראים, להוסיף שורות וקטגוריות. "כמות דרושה" — רק אם רלוונטי.</div>
            ${sectionsHtml(d, true, ev, { only: step.si, noAdd: true })}`
         : `<div class="empty">החלק הזה לא ייכלל בטופס, במשימות ובזימון.</div>`}
     </div>`;
@@ -1224,9 +1269,13 @@ function renderEditor(focusSel) {
       <span>${ev ? statusChip(ev) : '<span class="status st-draft">טיוטה חדשה</span>'} <span id="dirtyMark" class="small muted">${editing.dirty ? "● יש שינויים שלא נשמרו" : ""}</span></span>
     </div>
     <div class="form-title">${esc(d.name) || "אירוע חדש"}</div>
+    ${peopleBarHtml(ev)}
+    <div id="editStale" class="banner hidden no-print"></div>
+    ${ev && ev.status === "draft" && ev.managerKey && !ev.submittedAt && ev.requestDecision && ev.requestDecision.note ? `<div class="banner"><span>💬 ${esc(ev.requestDecision.by)} באישור הבקשה: ${esc(ev.requestDecision.note)}</span></div>` : ""}
+    ${securityNotesHtml(ev)}
     <div class="wiz-bar no-print">
       ${steps.map((s, i) => `<button class="wiz-step ${i === editing.step ? "cur" : ""} ${i < editing.step ? "past" : ""} ${s.off ? "off" : ""}" data-act="goStep" data-n="${i}">
-        <span class="wiz-n">${i < editing.step && !s.off ? "✓" : i + 1}</span><span class="wiz-l">${esc(s.label)}${s.off ? " (דילוג)" : ""}</span></button>`).join("")}
+        <span class="wiz-n">${i < editing.step && !s.off ? "✓" : i + 1}</span><span class="wiz-l">${esc(s.label)}${s.off ? " (דילוג)" : ""}${s.sub ? `<small class="wiz-sum" title="${esc(s.sub)}">${esc(s.sub)}</small>` : ""}</span></button>`).join("")}
     </div>
     ${body}
     <div class="card no-print wiz-foot">
@@ -1234,12 +1283,15 @@ function renderEditor(focusSel) {
         <div class="actions">
           ${editing.step > 0 ? `<button class="btn btn-light" data-act="goStep" data-n="${editing.step - 1}">→ הקודם</button>` : ""}
           <button class="btn btn-light" data-act="saveDraft">💾 שמירת טיוטה</button>
-          ${ev && ev.status === "draft" ? `<button class="btn btn-red btn-sm" data-act="deleteDraft">🗑 מחיקת טיוטה</button>` : ""}
-          ${ev && ev.status === "returned" ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
+          ${ev && ev.status === "draft" && isOwner(ev) && !ev.managerKey ? `<button class="btn btn-red btn-sm" data-act="deleteDraft">🗑 מחיקת טיוטה</button>` : ""}
+          ${ev && ev.status === "draft" && ev.managerKey && (isOwner(ev) || isAdmin()) ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
+          ${ev && ev.status === "returned" && (isOwner(ev) || isAdmin()) ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
         </div>
         ${next
           ? `<button class="btn" data-act="goStep" data-n="${editing.step + 1}" style="font-size:15px;padding:11px 22px">הבא: ${esc(next.label)} ←</button>`
-          : `<button class="btn btn-green" data-act="submit" style="font-size:15px;padding:11px 22px">${returned ? "📤 שליחה מחדש" : "📤 שליחה לאישור"}</button>`}
+          : (ev && !isOwner(ev) && !isAdmin()
+            ? `<button class="btn btn-green" data-act="partnerDone" style="font-size:15px;padding:11px 22px">✅ סיימתי — שליחה ל${esc(firstName(ownerName(ev)))} לבדיקה</button>`
+            : `<button class="btn btn-green" data-act="submit" style="font-size:15px;padding:11px 22px">${returned ? "📤 שליחה מחדש" : "📤 שליחה לאישור"}</button>`)}
       </div>
     </div>
     ${ev && step.key === "summary" ? historyHtml(ev) : ""}`;
@@ -1309,8 +1361,11 @@ async function saveEvent(submit) {
   const isNew = !editing.id;
   const id = editing.id || Store.newKey("events");
   const prev = isNew ? null : S.events[id];
+  if (prev && (prev.updatedAt || 0) > (editing.loadedAt || 0) && prev.updatedBy && prev.updatedBy !== S.me.name &&
+      !confirm(prev.updatedBy + " שמר/ה שינויים בטופס מאז שפתחת אותו.\nלשמור את הגרסה שלך? השינויים של " + prev.updatedBy + " יידרסו.")) return;
+  if (submit && prev && !isOwner(prev) && !isAdmin()) { toast("רק מנהל/ת האירוע שולח/ת לאישור", "error"); return; }
   const now = Date.now();
-  const patch = { updatedAt: now, sections: clone(d.sections) };
+  const patch = { updatedAt: now, updatedBy: S.me.name, sections: clone(d.sections) };
   // נוסח הזימון שמנהל/ת האירוע הכין/ה. null מוחק (חזרה לנוסח שנבנה מהטופס)
   patch.inviteText = d.inviteText ? {
     title: d.inviteText.title,
@@ -1359,6 +1414,7 @@ async function saveEvent(submit) {
   } else {
     toast("הטיוטה נשמרה", "ok");
     editing.id = id;
+    editing.loadedAt = now;
     editing.clonedFrom = null;
     if (isNew) { skipHashGuard = true; location.hash = "#event/" + id; mounted = "edit:" + id; }
     renderEditor();
@@ -1399,11 +1455,13 @@ function renderView(ev) {
       <div class="actions">
         <button class="btn btn-light btn-sm" data-act="print">🖨️ ייצוא PDF / הדפסה</button>
         <button class="btn btn-light btn-sm" data-act="clone" data-id="${esc(ev.id)}">⧉ שכפול לאירוע חדש</button>
-        ${(isCreator(ev) || isAdmin()) && !["cancelled"].includes(ev.status) ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
+        ${(isOwner(ev) || isAdmin()) && !["cancelled"].includes(ev.status) ? `<button class="btn btn-red btn-sm" data-act="cancelEvent">ביטול האירוע</button>` : ""}
         ${canDelete(ev) ? `<button class="btn btn-red btn-sm" data-act="deleteEvent" data-id="${esc(ev.id)}">🗑 מחיקה מהרשימה</button>` : ""}
       </div>
     </div>
-    ${ev.status === "returned" ? `<div class="panel returned"><h3>↩️ הוחזר לתיקון — ממתין ל${esc(ev.createdByName)}</h3><div style="white-space:pre-wrap">${esc(ev.returnReason || "")}</div></div>` : ""}
+    ${peopleBarHtml(ev)}
+    ${securityNotesHtml(ev)}
+    ${ev.status === "returned" ? `<div class="panel returned"><h3>↩️ הוחזר לתיקון — ממתין ל${esc(ownerName(ev))}</h3><div style="white-space:pre-wrap">${esc(ev.returnReason || "")}</div></div>` : ""}
     ${approve ? approvalPanelHtml(ev, stage) : ""}
     <div class="card">
       <div class="form-title">טבלת שליטה להכנה וניהול אירוע ב${ORG_NAME}</div>
@@ -1414,6 +1472,7 @@ function renderView(ev) {
     ${ev.invite && ev.invite.sentAt ? `<div class="card no-print"><div class="card-title">📅 זימון נשלח</div>
       <div class="small" style="margin-top:6px">${esc(fmtTs(ev.invite.sentAt))} · ${ev.invite.recipients.length} נמענים: ${ev.invite.recipients.map(r => esc(r.name)).join(", ")}</div></div>` : ""}
     <div class="card">${sectionsHtml(ev, false, ev)}</div>
+    ${filesCardHtml(ev)}
     ${summaryCardHtml(ev)}
     ${historyHtml(ev)}`;
 
@@ -1633,6 +1692,7 @@ function approvalPanelHtml(ev, stage) {
     ${checksHtml(eventChecks(ev, ev.id), "🔎 נקודות לבדיקה לפני אישור")}
     ${aiReviewHtml(ev.id, true)}
     ${sched ? inviteEditorHtml(ev) : ""}
+    ${stage.role === "security" ? securityExtrasHtml(ev) : ""}
     <div class="field"><label>הערה / סיבת החזרה ${sched ? "(למשל: המועד לא מתאים כי...)" : ""}</label>
       <textarea id="approveNote" placeholder="בהחזרה — חובה לפרט למה"></textarea></div>
     <div class="field"><label>חתימה</label>
@@ -1654,6 +1714,8 @@ async function doApprove(ev) {
   const stage = currentStage(ev);
   if (!stage || !canApprove(ev)) return;
   if (!sigPad || sigPad.isEmpty()) { toast("יש לחתום לפני האישור", "error"); return; }
+  if (stage.role === "security" && +ev.participants > 100 && !hasKabatFile(ev) &&
+      !confirm('לא צורף קובץ הנחיות קב"ט העירייה לאירוע מעל 100 משתתפים.\nלאשר בכל זאת?')) return;
   const img = sigPad.toDataURL();
   const note = $("approveNote").value.trim();
   const now = Date.now();
@@ -1663,6 +1725,8 @@ async function doApprove(ev) {
     ["history/" + Store.newKey("h")]: histEntry("approved", { stage: stage.label, note }),
   };
   const next = STAGES[STAGES.indexOf(stage) + 1];
+  const secNotes = stage.role === "security" && $("secNotes") ? $("secNotes").value.trim() : "";
+  if (stage.role === "security") patch.securityNotes = secNotes ? { text: secNotes, by: S.me.name, at: now } : null;
 
   if (stage.role === "scheduler") {
     const inv = currentInvite(ev);
@@ -1695,7 +1759,11 @@ async function doApprove(ev) {
 
   const updated = { ...ev, ...patch };
   if (patch.status === "approved") { notifyApproved(updated); toast("האירוע אושר" + (patch.invite.sentAt ? " והזימון נשלח 🎉" : ""), "ok"); }
-  else { notifyStage(updated, next, approversFor(next)); toast("אושר ונחתם — עבר ל" + next.label, "ok"); }
+  else {
+    const n = (updated.securityNotes && updated.securityNotes.text) || "";
+    notifyStage(updated, next, approversFor(next), n ? 'הערות הקב"ט: ' + n : "");
+    toast("אושר ונחתם — עבר ל" + next.label, "ok");
+  }
   render(true);
 }
 
@@ -1712,7 +1780,7 @@ async function doReturn(ev) {
   await Store.update("events/" + ev.id, patch);
   notifyReturned(ev, stage, S.me.name, reason);
   inviteDraft = null; viewLock = false;
-  toast("האירוע הוחזר ל" + ev.createdByName, "ok");
+  toast("האירוע הוחזר ל" + ownerName(ev), "ok");
   render(true);
 }
 
@@ -1791,6 +1859,21 @@ function bindPageEvents() {
       }
       case "refresh": viewLock = false; inviteDraft = null; render(true); break;
       case "print": window.print(); break;
+      case "submitRequest": submitRequest(); break;
+      case "aiRequest": doAiRequest(t); break;
+      case "approveRequest": approveRequest(ev); break;
+      case "returnRequest": returnRequest(ev); break;
+      case "unshare": removePartner(t.dataset.key); break;
+      case "partnerDone": partnerDone(); break;
+      case "reloadEditing": {
+        const cur = S.events[editing.id];
+        editing = { id: cur.id, data: clone(cur), dirty: false, loadedAt: cur.updatedAt || 0, step: editing.step };
+        renderEditor(); break;
+      }
+      case "removeFile":
+        if (!confirm("להסיר את הקובץ מהאירוע?")) return;
+        await Store.update("events/" + ev.id, { ["files/" + t.dataset.key]: null });
+        rerenderApproval(S.events[ev.id]); break;
       case "aiFill": doAiFill(t); break;
       case "aiInvite": viewLock = true; doAiInvite(ev, t); break;
       case "aiInviteDraft": doAiInviteDraft(t); break;
@@ -1873,6 +1956,8 @@ function bindPageEvents() {
       markDirty();
     } else if (t.dataset.ownerIn) {
       if (pickedFromList(t) && e.inputType !== "insertText") commitOwnerInput(t);
+    } else if (t.id === "partnerIn") {
+      if (pickedFromList(t) && e.inputType !== "insertText") addPartner(t);
     } else if (t.id === "recipientIn") {
       if (pickedFromList(t) && e.inputType !== "insertText") addRecipient(t);
     } else if (t.dataset.inv && inviteDraft) {
@@ -1885,6 +1970,10 @@ function bindPageEvents() {
         description: box.querySelector('[data-ivt="description"]').value,
       };
       markDirty();
+    } else if (t.id === "reqDesc" && editing) {
+      editing.reqDesc = t.value;
+    } else if (t.id === "secNotes" || t.id === "reqNote") {
+      viewLock = true;
     } else if (t.id === "aiDesc" && editing) {
       editing.aiDesc = t.value;
     } else if (t.dataset.sum) {
@@ -1917,13 +2006,20 @@ function bindPageEvents() {
     if (t.dataset.act === "togglePast") { showPast = t.checked; render(true); }
     if (t.dataset.ownerIn && t.value.trim()) commitOwnerInput(t, false);
     if (t.id === "recipientIn" && t.value.trim()) addRecipient(t);
+    if (t.id === "partnerIn" && t.value.trim()) addPartner(t);
+    if (t.id === "kabatFile" && t.files && t.files[0]) {
+      const evNow = S.events[route().arg];
+      viewLock = true;
+      await uploadEventFile(evNow, t.files[0], "kabat");
+      rerenderApproval(S.events[evNow.id]);
+    }
   });
 
   page.addEventListener("keydown", e => {
     const t = e.target;
-    if ((e.key === "Enter" || e.key === ",") && (t.dataset.ownerIn || t.id === "recipientIn")) {
+    if ((e.key === "Enter" || e.key === ",") && (t.dataset.ownerIn || t.id === "recipientIn" || t.id === "partnerIn")) {
       e.preventDefault();
-      if (t.dataset.ownerIn) commitOwnerInput(t); else addRecipient(t);
+      if (t.dataset.ownerIn) commitOwnerInput(t); else if (t.id === "partnerIn") addPartner(t); else addRecipient(t);
     } else if (e.key === "Backspace" && t.dataset.ownerIn && !t.value) {
       const row = getPath(editing.data, t.dataset.ownerIn);
       if (row.owners.length) { row.owners.pop(); markDirty(); renderEditor(`[data-owner-in="${t.dataset.ownerIn}"]`); }
@@ -1959,7 +2055,9 @@ function rerenderApproval(ev) {
   viewLock = true;
   const sig = sigPad && !sigPad.isEmpty() ? sigPad.toDataURL() : null;
   const note = $("approveNote") ? $("approveNote").value : "";
+  const sec = $("secNotes") ? $("secNotes").value : null;
   renderView(ev);
+  if (sec != null && $("secNotes")) $("secNotes").value = sec;
   if (sig && sigPad) sigPad.load(sig);
   if ($("approveNote")) $("approveNote").value = note;
 }
@@ -1990,6 +2088,16 @@ async function demoSeedIfEmpty() {
     history: { h1: { at: now, by: "שניר דואני", action: "created" }, h2: { at: now + 1, by: "שניר דואני", action: "submitted" } },
   });
   await Store.set("events/demo1", d);
+  const req = newEventData();
+  const keren = emailKey("kerenbaileydahan@gmail.com");
+  Object.assign(req, {
+    name: "ערב חוג ידידים", goals: "ערב הוקרה לידידי הטכנודע, קבלת פנים במבואה והרצאה באודיטוריום.",
+    dateStart: "2027-01-17", timeStart: "18:30", timeEnd: "22:00", location: "אודיטוריום ומבואה", participants: "90",
+    status: "request", createdAt: now, updatedAt: now, requestedAt: now, coordinator: "קרן דהן",
+    createdBy: "kerenbaileydahan@gmail.com", createdByKey: keren, createdByName: "קרן דהן", createdByWorkEmail: "keren.dahan@technoda.org.il",
+    history: { h1: { at: now, by: "קרן דהן", action: "requested" } },
+  });
+  await Store.set("events/demo2", req);
   S.me = null;
 }
 

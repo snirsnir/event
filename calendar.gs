@@ -62,6 +62,7 @@ function handleRequest(data) {
     return buildResponse({ success: false, error: 'unauthorized' });
   }
   if (data.action === 'ai') return handleAi(data);
+  if (data.action === 'upload') return handleUpload(data);
   if (typeof Calendar === 'undefined') {
     return buildResponse({ success: false, error: 'יש להפעיל את Google Calendar API בתפריט Services של הסקריפט' });
   }
@@ -316,6 +317,25 @@ var AI_TASKS = {
     },
   },
 
+  // ── ניסוח בקשה לאירוע (השלב הראשון, לפני הטופס המלא) ──
+  request: {
+    schema: obj({
+      name: S_STR, goals: S_STR, dateStart: S_STR, dateEnd: S_STR, timeStart: S_STR, timeEnd: S_STR,
+      location: S_STR, participants: S_STR,
+    }),
+    prompt: function (p) {
+      return 'עובד/ת תיאר/ה במילים חופשיות בקשה לאירוע חדש. נסח/י ממנה בקשה מסודרת לסמנכ"ל התפעול.\n' +
+        'היום: ' + p.today + '.\n\n' +
+        'החזר/י:\n' +
+        '- name — שם קצר וברור לאירוע, כמו שנהוג בטכנודע.\n' +
+        '- goals — 2–4 משפטים מנוסחים היטב: מה האירוע, למי הוא מיועד, מה המטרה, ומה מיוחד בו. אם במאגר יש אירועים קודמים דומים, אפשר להזכיר שהאירוע דומה להם.\n' +
+        '- תאריכים בפורמט YYYY-MM-DD (dateEnd ריק ליום אחד), שעות HH:MM, מספר משתתפים בספרות.\n' +
+        '- location — מתחמים בטכנודע אם צוינו, או המקובלים לאירוע כזה לפי המאגר.\n' +
+        'שדה שאין לו בסיס בתיאור או במאגר — להשאיר ריק.\n\n' +
+        'התיאור:\n' + p.description;
+    },
+  },
+
   // ── בדיקת "מה שכחתי" ותקציר למאשרים ──
   review: {
     schema: obj({
@@ -437,3 +457,42 @@ function daysBetween(fromIso, toIso) {
 }
 function toArr(v) { return Array.isArray(v) ? v.filter(function (x) { return x != null; }) : (v ? Object.keys(v).map(function (k) { return v[k]; }) : []); }
 function makeObj(k, v) { var o = {}; o[k] = v; return o; }
+
+// ============================================================
+//  העלאת קבצים לאירוע (למשל הנחיות קב"ט העירייה) — ל-Google Drive
+// ============================================================
+// הקבצים נשמרים בתיקייה "טכנודע — קבצי אירועים" ב-Drive של החשבון שמריץ את הסקריפט
+// (נוצרת לבד בפעם הראשונה), ומשותפים לצפייה למי שיש לו את הקישור.
+// הקישור נשמר באירוע, וגלוי רק לעובדים שנכנסים למערכת.
+// אין צורך בהרשאה חדשה — הסקריפט כבר מורשה ל-Drive.
+
+var MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function handleUpload(data) {
+  try {
+    verifyStaff(data.idToken);
+    if (!data.data || !data.name) throw new Error('חסר קובץ');
+    var bytes = Utilities.base64Decode(data.data);
+    if (bytes.length > MAX_UPLOAD_BYTES) throw new Error('הקובץ גדול מ-10MB');
+    var blob = Utilities.newBlob(bytes, data.mime || 'application/octet-stream', data.name);
+    var file = eventFilesFolder().createFile(blob);
+    if (data.eventName) file.setDescription('אירוע: ' + data.eventName);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    Logger.log('📎 קובץ הועלה: ' + data.name);
+    return buildResponse({ success: true, result: { id: file.getId(), url: file.getUrl(), name: data.name } });
+  } catch (err) {
+    Logger.log('❌ העלאה: ' + err);
+    return buildResponse({ success: false, error: String(err.message || err) });
+  }
+}
+
+function eventFilesFolder() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('FILES_FOLDER_ID');
+  if (id) {
+    try { return DriveApp.getFolderById(id); } catch (e) { /* נמחקה — ניצור חדשה */ }
+  }
+  var folder = DriveApp.createFolder('טכנודע — קבצי אירועים');
+  props.setProperty('FILES_FOLDER_ID', folder.getId());
+  return folder;
+}

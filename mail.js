@@ -77,13 +77,13 @@ async function notifyStage(ev, stage, approvers, extraNote) {
   });
 }
 
-// הוחזר לתיקון — מייל למי שיצר/ה את האירוע
+// הוחזר לתיקון — מייל למנהל/ת האירוע
 async function notifyReturned(ev, stage, byName, reason) {
   await sendMail({
-    to: ev.createdByWorkEmail || ev.createdBy,
+    to: ownerMail(ev),
     subject: `↩️ האירוע הוחזר לתיקון — ${ev.name}`,
     html: emailHtml(`
-      <p>שלום <strong>${escHtml(ev.createdByName)}</strong>,</p>
+      <p>שלום <strong>${escHtml(ownerName(ev))}</strong>,</p>
       <p><strong>${escHtml(byName)}</strong> (${escHtml(stage.label)}) החזיר/ה את האירוע לתיקון.</p>
       ${infoBox(eventInfoRows(ev))}
       ${infoBox([`💬 <strong>הסיבה:</strong><br><em>${escHtml(reason)}</em>`], "#c0392b", "#fdf0ee")}
@@ -92,13 +92,13 @@ async function notifyReturned(ev, stage, byName, reason) {
   });
 }
 
-// אושר סופית — מייל ליוצר/ת
+// אושר סופית — מייל למנהל/ת האירוע (ולמבקש/ת, אם זה מישהו אחר)
 async function notifyApproved(ev) {
   await sendMail({
-    to: ev.createdByWorkEmail || ev.createdBy,
+    to: [...new Set([ownerMail(ev), requesterMail(ev)])],
     subject: `✅ האירוע אושר וזימון נשלח — ${ev.name}`,
     html: emailHtml(`
-      <p>שלום <strong>${escHtml(ev.createdByName)}</strong>,</p>
+      <p>שלום,</p>
       <p style="font-size:17px">🎉 האירוע <strong style="color:#1a7f4b">אושר בכל השלבים</strong>, וזימון נשלח ליומן.</p>
       ${infoBox(eventInfoRows(ev), "#1a7f4b", "#e8f7ee")}
     `, ev.id),
@@ -167,6 +167,11 @@ async function sendCalendarCancel(calendarEventId) {
 // ושולח ל-Claude. מפתח ה-API ומאגר הידע נמצאים רק בהגדרות הסקריפט.
 async function callAI(task, payload) {
   if (IS_DEMO) throw new Error("העוזר זמין רק במערכת האמיתית, לא במצב הדגמה");
+  return scriptCall("ai", { task, payload });
+}
+
+// בקשה מאומתת ל-Apps Script: עם אסימון הכניסה של המשתמש, שהסקריפט בודק מול Firebase
+async function scriptCall(action, extra) {
   if (!APPS_SCRIPT_URL) throw new Error("כתובת Apps Script לא הוגדרה");
   const user = firebase.auth().currentUser;
   if (!user) throw new Error("נדרשת כניסה למערכת");
@@ -176,12 +181,108 @@ async function callAI(task, payload) {
     const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "ai", token: APPS_SCRIPT_TOKEN, idToken, task, payload }),
+      body: JSON.stringify({ action, token: APPS_SCRIPT_TOKEN, idToken, ...extra }),
     });
     data = await res.json();
   } catch (err) {
-    throw new Error("אין תשובה מהעוזר (" + err.message + ")");
+    throw new Error("אין תשובה מהשרת (" + err.message + ")");
   }
-  if (!data.success) throw new Error(data.error || "שגיאה בעוזר");
+  if (!data.success) throw new Error(data.error || "שגיאה בשרת");
   return data.result;
+}
+
+// ════════════════════════════════════════════════════════════
+//  שלב הבקשה ושיתוף הטופס
+// ════════════════════════════════════════════════════════════
+
+function requestInfoRows(ev) {
+  return [
+    `🎪 <strong>אירוע:</strong>&nbsp; ${escHtml(ev.name)}`,
+    `📅 <strong>מועד:</strong>&nbsp; ${escHtml(formatEventWhen(ev))}`,
+    ...(ev.location ? [`📍 <strong>מיקום:</strong>&nbsp; ${escHtml(ev.location)}`] : []),
+    ...(ev.participants ? [`👥 <strong>משתתפים:</strong>&nbsp; ${escHtml(ev.participants)}`] : []),
+    `📝 <strong>הוגש ע"י:</strong>&nbsp; ${escHtml(ev.createdByName)}`,
+  ];
+}
+
+// בקשה חדשה (או מתוקנת) — לסמנכ"ל התפעול
+async function notifyRequest(ev, approvers) {
+  await sendMail({
+    to: approvers.map(p => staffMail(p)),
+    subject: `📝 בקשה לאירוע — ${ev.name}`,
+    html: emailHtml(`
+      <p>שלום,</p>
+      <p><strong>${escHtml(ev.createdByName)}</strong> הגיש/ה בקשה לאירוע${ev.returnedByName ? " (מתוקנת)" : ""}:</p>
+      ${infoBox(requestInfoRows(ev))}
+      ${ev.goals ? infoBox([`💬 ${escHtml(ev.goals)}`], "#6a55d6", "#f6f4ff") : ""}
+      <p style="color:#555;font-size:14px">אפשר לאשר ולבחור מנהל/ת אירוע, או להחזיר עם הערות.</p>
+    `, ev.id),
+  });
+}
+
+async function notifyRequestReturned(ev, byName, reason) {
+  await sendMail({
+    to: requesterMail(ev),
+    subject: `↩️ הבקשה לאירוע הוחזרה — ${ev.name}`,
+    html: emailHtml(`
+      <p>שלום <strong>${escHtml(ev.createdByName)}</strong>,</p>
+      <p><strong>${escHtml(byName)}</strong> החזיר/ה את הבקשה לאירוע עם הערות:</p>
+      ${infoBox([`💬 <em>${escHtml(reason)}</em>`], "#c0392b", "#fdf0ee")}
+      <p style="color:#555;font-size:14px">אפשר לתקן את הבקשה במערכת ולשלוח שוב.</p>
+    `, ev.id),
+  });
+}
+
+// הבקשה אושרה — למנהל/ת שמונה/תה, ולמבקש/ת אם זה מישהו אחר
+async function notifyManagerAssigned(ev, manager, byName, note) {
+  const noteBox = note ? infoBox([`💬 ${escHtml(byName)}: <em>${escHtml(note)}</em>`], "#6a55d6", "#f6f4ff") : "";
+  await sendMail({
+    to: staffMail(manager),
+    subject: `🎪 את/ה מנהל/ת האירוע — ${ev.name}`,
+    html: emailHtml(`
+      <p>שלום <strong>${escHtml(manager.name)}</strong>,</p>
+      <p><strong>${escHtml(byName)}</strong> אישר/ה את הבקשה לאירוע, ואת/ה מנהל/ת האירוע.</p>
+      ${infoBox(requestInfoRows(ev), "#1a7f4b", "#e8f7ee")}
+      ${noteBox}
+      <p style="color:#555;font-size:14px">השלב הבא: למלא את טופס ניהול האירוע ולשלוח לאישורים. אפשר לשתף עובדים שיעזרו בטופס.</p>
+    `, ev.id),
+  });
+  if (manager.key !== ev.createdByKey) {
+    await sendMail({
+      to: requesterMail(ev),
+      subject: `✅ הבקשה לאירוע אושרה — ${ev.name}`,
+      html: emailHtml(`
+        <p>שלום <strong>${escHtml(ev.createdByName)}</strong>,</p>
+        <p>הבקשה שלך אושרה. את ניהול האירוע ${escHtml(byName)} העביר/ה ל<strong>${escHtml(manager.name)}</strong>.</p>
+        ${infoBox(requestInfoRows(ev), "#1a7f4b", "#e8f7ee")}
+        ${noteBox}
+      `, ev.id),
+    });
+  }
+}
+
+async function notifyShared(ev, partner, byName) {
+  await sendMail({
+    to: staffMail(partner),
+    subject: `👥 ${byName} שיתף/ה אותך בטופס — ${ev.name}`,
+    html: emailHtml(`
+      <p>שלום <strong>${escHtml(partner.name)}</strong>,</p>
+      <p><strong>${escHtml(byName)}</strong> שיתף/ה אותך בטופס ניהול האירוע, כדי שתעזור/י להכין אותו.</p>
+      ${infoBox(eventInfoRows(ev))}
+      <p style="color:#555;font-size:14px">כשתסיים/י, לחצו בסוף הטופס "סיימתי — שליחה לבדיקה".</p>
+    `, ev.id),
+  });
+}
+
+async function notifyPartnerDone(ev, partnerName) {
+  await sendMail({
+    to: ownerMail(ev),
+    subject: `✅ ${partnerName} סיים/ה לעבוד על הטופס — ${ev.name}`,
+    html: emailHtml(`
+      <p>שלום <strong>${escHtml(ownerName(ev))}</strong>,</p>
+      <p><strong>${escHtml(partnerName)}</strong> סיים/ה את החלק שלו/ה בטופס ניהול האירוע, ומבקש/ת שתבדוק/י.</p>
+      ${infoBox(eventInfoRows(ev))}
+      <p style="color:#555;font-size:14px">אחרי הבדיקה אפשר לשלוח את הטופס לאישורים.</p>
+    `, ev.id),
+  });
 }

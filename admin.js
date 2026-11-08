@@ -214,6 +214,7 @@ function templateCardHtml() {
       <div class="sec-head">
         <input class="sec-title" data-tp="${si}.title" value="${esc(sec.title)}">
         <input class="sec-note" data-tp="${si}.note" value="${esc(sec.note || "")}" placeholder="הערה לחלק (אופציונלי)">
+        <input class="sec-desc" data-tp="${si}.description" value="${esc(sec.description || "")}" placeholder="תמצית (ריק = שמות הקטגוריות)" title="מה יש בחלק — מוצג בפס השלבים">
         <button class="btn-icon" data-tpa="delSec" data-si="${si}" title="מחיקת החלק">🗑</button>
       </div>
       <div class="sheet-wrap"><table class="sheet">
@@ -240,7 +241,7 @@ function currentTemplate() {
   const saved = toArr(S.settings.template);
   const src = saved.length ? saved : DEFAULT_SECTIONS;
   return src.map(s => ({
-    title: s.title || "", note: s.note || "",
+    title: s.title || "", note: s.note || "", description: s.description || "",
     groups: toArr(s.groups).map(g => ({
       name: g.name || "",
       rows: toArr(g.rows).map(r => ({ item: r.item || "", owners: toArr(r.owners) })),
@@ -273,7 +274,7 @@ function bindTemplateEditor(page) {
   };
   $("tplSave").onclick = async () => {
     const tpl = adminTpl.map(s => ({
-      title: s.title.trim() || "חלק", note: (s.note || "").trim(),
+      title: s.title.trim() || "חלק", note: (s.note || "").trim(), description: (s.description || "").trim(),
       groups: s.groups.map(g => ({
         name: g.name.trim(),
         rows: g.rows.filter(r => r.item.trim()).map(r => ({
